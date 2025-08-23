@@ -1,0 +1,12 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\ProgramData\npm\npm\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.8.2
+2 info using node@v20.11.0
+3 silly config load:file:C:\ProgramData\npm\npm\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\USER\Documents\newhope-chat\.npmrc
+5 silly config load:file:C:\Users\USER\.npmrc
+6 silly config load:file:C:\Users\USER\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm exec expo start
+8 verbose argv "exec" "--" "expo" "start"
+9 verbose logfile logs-max:10 dir:C:\Users\USER\Documents\newhope-chat\UsersUSER.npm-cache\_logs\2025-08-23T19_28_53_281Z-
+10 verbose logfile C:\Users\USER\Documents\newhope-chat\UsersUSER.npm-cache\_logs\2025-08-23T19_28_53_281Z-debug-0.log
+11 silly logfile done cleaning log files
