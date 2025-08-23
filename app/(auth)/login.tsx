@@ -147,20 +147,6 @@ export default function Login() {
             Forgot your password?
           </Text>
         </TouchableOpacity>
-
-        {/* Signup link */}
-        <View
-          style={{
-            marginTop: 20,
-            flexDirection: "row",
-            justifyContent: "center",
-          }}
-        >
-          <Text style={{ color: "#666" }}>Don’t have an account? </Text>
-          <TouchableOpacity onPress={() => router.push("/(auth)/signup")}>
-            <Text style={{ color: "#007AFF", fontWeight: "600" }}>Sign up</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </View>
   );

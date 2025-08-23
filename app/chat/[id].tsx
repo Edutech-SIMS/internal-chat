@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { useAuth } from "../../contexts/AuthContext";
+import { canSendMessages } from "../../lib/message-permissions";
 import { supabase } from "../../lib/supabase";
 
 interface Message {
@@ -117,13 +118,20 @@ export default function ChatScreen() {
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
 
-    const { error } = await supabase.from("messages").insert([
-      {
-        content: newMessage,
-        user_id: user?.id,
-        group_id: chatId,
-      },
-    ]);
+    // Check if user has permission to send messages
+    const hasPermission = await canSendMessages(chatId, user?.id!);
+
+    if (!hasPermission) {
+      Alert.alert(
+        "Permission Denied",
+        "You do not have permission to send messages in this announcement group."
+      );
+      return;
+    }
+
+    const { error } = await supabase
+      .from("messages")
+      .insert([{ content: newMessage, user_id: user?.id, group_id: chatId }]);
 
     if (error) {
       Alert.alert("Error", error.message);

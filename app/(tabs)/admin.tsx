@@ -37,8 +37,18 @@ interface Group {
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [activeTab, setActiveTab] = useState<"users" | "groups">("users");
   const [loading, setLoading] = useState(false);
+  const [selectedGroupForPermissions, setSelectedGroupForPermissions] =
+    useState<Group | null>(null);
+  const [groupMembers, setGroupMembers] = useState<User[]>([]);
+  const [messagePermissions, setMessagePermissions] = useState<{
+    [key: string]: boolean;
+  }>({});
+  const [permissionLoading, setPermissionLoading] = useState<string | null>(
+    null
+  );
+  const [isPermissionsModalVisible, setPermissionsModalVisible] =
+    useState(false);
   const { isAdmin, loading: authLoading } = useAuth();
 
   // User creation state
@@ -54,7 +64,6 @@ export default function AdminDashboard() {
 
   // Modal states
   const [isUsersModalVisible, setUsersModalVisible] = useState(false);
-  const [isGroupsModalVisible, setGroupsModalVisible] = useState(false);
   const [isAssignModalVisible, setAssignModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState(users[0]?.id ?? "");
   const [selectedGroup, setSelectedGroup] = useState(groups[0]?.id ?? "");
@@ -88,6 +97,120 @@ export default function AdminDashboard() {
     } else {
       setUsers(data || []);
     }
+  };
+
+  // Add these functions near your other functions
+  const fetchGroupMembers = async (groupId: string) => {
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members?select=profiles(id,email,full_name,role)&group_id=eq.${groupId}`,
+        {
+          headers: {
+            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
+            Authorization: `Bearer ${process.env
+              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
+          },
+        }
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      const members = data
+        .map((item: any) => item.profiles)
+        .filter(Boolean) as User[];
+      setGroupMembers(members);
+
+      // Also fetch current permissions
+      await fetchMessagePermissions(groupId);
+    } catch (error) {
+      console.error("Error fetching group members:", error);
+      Alert.alert("Error", "Failed to load group members");
+    }
+  };
+
+  const fetchMessagePermissions = async (groupId: string) => {
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_message_permissions?select=user_id,can_send_messages&group_id=eq.${groupId}`,
+        {
+          headers: {
+            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
+            Authorization: `Bearer ${process.env
+              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
+          },
+        }
+      );
+
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      const permissionsMap: { [key: string]: boolean } = {};
+      data.forEach((perm: any) => {
+        permissionsMap[perm.user_id] = perm.can_send_messages;
+      });
+      setMessagePermissions(permissionsMap);
+    } catch (error) {
+      console.error("Error fetching message permissions:", error);
+    }
+  };
+
+  const updateMessagePermission = async (
+    groupId: string,
+    userId: string,
+    canSend: boolean
+  ) => {
+    setPermissionLoading(`${groupId}-${userId}`);
+
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_message_permissions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
+            Authorization: `Bearer ${process.env
+              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
+            Prefer: "resolution=merge-duplicates",
+          },
+          body: JSON.stringify({
+            group_id: groupId,
+            user_id: userId,
+            can_send_messages: canSend,
+            granted_by: (await supabase.auth.getUser()).data.user?.id,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update permission: ${response.status} - ${errorText}`
+        );
+      }
+
+      // Update local state
+      setMessagePermissions((prev) => ({
+        ...prev,
+        [userId]: canSend,
+      }));
+
+      Alert.alert("Success", "Message permission updated successfully!");
+    } catch (error: any) {
+      console.error("Error updating permission:", error);
+      Alert.alert("Error", error.message || "Failed to update permission");
+    } finally {
+      setPermissionLoading(null);
+    }
+  };
+
+  const openPermissionsModal = async (group: Group) => {
+    setSelectedGroupForPermissions(group);
+    setPermissionsModalVisible(true);
+    await fetchGroupMembers(group.id);
   };
 
   const fetchGroups = async () => {
@@ -388,192 +511,68 @@ export default function AdminDashboard() {
       {/* Tab Navigation */}
       <View style={styles.tabContainer}>
         <TouchableOpacity
-          style={[styles.tab, activeTab === "users" && styles.activeTab]}
-          onPress={() => setActiveTab("users")}
+          style={[styles.tab, styles.activeTab]}
           accessibilityLabel="Users tab"
         >
-          <Ionicons
-            name="people"
-            size={20}
-            color={activeTab === "users" ? "#007AFF" : "#666"}
-          />
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "users" && styles.activeTabText,
-            ]}
-          >
-            Users
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "groups" && styles.activeTab]}
-          onPress={() => setActiveTab("groups")}
-          accessibilityLabel="Groups tab"
-        >
-          <Ionicons
-            name="layers"
-            size={20}
-            color={activeTab === "groups" ? "#007AFF" : "#666"}
-          />
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "groups" && styles.activeTabText,
-            ]}
-          >
-            Groups
+          <Ionicons name="people" size={20} color="#007AFF" />
+          <Text style={[styles.tabText, styles.activeTabText]}>
+            User Management
           </Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content}>
-        {activeTab === "users" ? (
-          <View>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Create New User</Text>
-              <TextInput
-                placeholder="Full Name"
-                value={newUserName}
-                onChangeText={setNewUserName}
-                style={styles.input}
-                accessibilityLabel="Full name input"
-              />
-              <TextInput
-                placeholder="Email"
-                value={newUserEmail}
-                onChangeText={setNewUserEmail}
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                accessibilityLabel="Email input"
-              />
-              <TextInput
-                placeholder="Password"
-                value={newUserPassword}
-                onChangeText={setNewUserPassword}
-                secureTextEntry
-                style={styles.input}
-                accessibilityLabel="Password input"
-              />
-              <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={createUser}
-                disabled={loading}
-                accessibilityLabel="Create user button"
-              >
-                <Text style={styles.buttonText}>
-                  {loading ? "Creating..." : "Create User"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View>
-              <TouchableOpacity
-                style={[styles.button, styles.secondaryButton]}
-                onPress={() => setUsersModalVisible(true)}
-                accessibilityLabel="View all users"
-              >
-                <Text style={{ color: "#007AFF", fontSize: 17 }}>
-                  View All Users
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Create New User</Text>
+            <TextInput
+              placeholder="Full Name"
+              value={newUserName}
+              onChangeText={setNewUserName}
+              style={styles.input}
+              accessibilityLabel="Full name input"
+            />
+            <TextInput
+              placeholder="Email"
+              value={newUserEmail}
+              onChangeText={setNewUserEmail}
+              style={styles.input}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              accessibilityLabel="Email input"
+            />
+            <TextInput
+              placeholder="Password"
+              value={newUserPassword}
+              onChangeText={setNewUserPassword}
+              secureTextEntry
+              style={styles.input}
+              accessibilityLabel="Password input"
+            />
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={createUser}
+              disabled={loading}
+              accessibilityLabel="Create user button"
+            >
+              <Text style={styles.buttonText}>
+                {loading ? "Creating..." : "Create User"}
+              </Text>
+            </TouchableOpacity>
           </View>
-        ) : (
-          <View>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Create New Group</Text>
-              <TextInput
-                placeholder="Group Name"
-                value={newGroupName}
-                onChangeText={setNewGroupName}
-                style={styles.input}
-                accessibilityLabel="Group name input"
-              />
-              <TextInput
-                placeholder="Description (Optional)"
-                value={newGroupDescription}
-                onChangeText={setNewGroupDescription}
-                style={[styles.input, styles.textArea]}
-                multiline
-                numberOfLines={3}
-                accessibilityLabel="Group description input"
-              />
-              <View style={styles.switchRow}>
-                <Text style={styles.switchLabel}>Public Group</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.switch,
-                    newGroupIsPublic && styles.switchActive,
-                  ]}
-                  onPress={() => setNewGroupIsPublic(!newGroupIsPublic)}
-                  accessibilityLabel={`Toggle public group ${
-                    newGroupIsPublic ? "on" : "off"
-                  }`}
-                >
-                  <View
-                    style={[
-                      styles.switchThumb,
-                      newGroupIsPublic && styles.switchThumbActive,
-                    ]}
-                  />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.switchRow}>
-                <Text style={styles.switchLabel}>Announcement Group</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.switch,
-                    newGroupIsAnnouncement && styles.switchActive,
-                  ]}
-                  onPress={() =>
-                    setNewGroupIsAnnouncement(!newGroupIsAnnouncement)
-                  }
-                  accessibilityLabel={`Toggle announcement group ${
-                    newGroupIsAnnouncement ? "on" : "off"
-                  }`}
-                >
-                  <View
-                    style={[
-                      styles.switchThumb,
-                      newGroupIsAnnouncement && styles.switchThumbActive,
-                    ]}
-                  />
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={createGroup}
-                disabled={loading}
-                accessibilityLabel="Create group button"
-              >
-                <Text style={styles.buttonText}>
-                  {loading ? "Creating..." : "Create Group"}
-                </Text>
-              </TouchableOpacity>
-            </View>
 
-            <View style={styles.section}>
-              <TouchableOpacity
-                style={styles.button}
-                onPress={() => setAssignModalVisible(true)}
-                accessibilityLabel="Assign user to group"
-              >
-                <Text style={styles.buttonText}>Assign User to Group</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.button, styles.secondaryButton]}
-                onPress={() => setGroupsModalVisible(true)}
-                accessibilityLabel="View all groups"
-              >
-                <Text style={[styles.buttonText, styles.secondaryButtonText]}>
-                  View All Groups
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() => setUsersModalVisible(true)}
+              accessibilityLabel="View all users"
+            >
+              <Text style={{ color: "#007AFF", fontSize: 17 }}>
+                View All Users
+              </Text>
+            </TouchableOpacity>
           </View>
-        )}
+        </View>
       </ScrollView>
 
       {/* Users Modal */}
@@ -616,68 +615,6 @@ export default function AdminDashboard() {
                           ]}
                         >
                           <Text style={styles.badgeText}>{item.role}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Groups Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isGroupsModalVisible}
-        onRequestClose={() => setGroupsModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>All Groups</Text>
-              <TouchableOpacity
-                onPress={() => setGroupsModalVisible(false)}
-                accessibilityLabel="Close groups modal"
-              >
-                <Ionicons name="close" size={24} color="#1a1c1e" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.modalContent}>
-              {groups.length === 0 ? (
-                <Text style={styles.emptyText}>No groups available</Text>
-              ) : (
-                groups.map((item) => (
-                  <View key={item.id} style={styles.card}>
-                    <View style={styles.cardContent}>
-                      <View style={[styles.avatar, styles.groupAvatar]}>
-                        <Ionicons name="people" size={20} color="white" />
-                      </View>
-                      <View style={styles.cardInfo}>
-                        <Text style={styles.cardTitle}>{item.name}</Text>
-                        <Text style={styles.cardSubtitle} numberOfLines={2}>
-                          {item.description || "No description"}
-                        </Text>
-                        <View style={styles.badges}>
-                          <View style={styles.badge}>
-                            <Text style={styles.badgeText}>
-                              {item.member_count} members
-                            </Text>
-                          </View>
-                          {item.is_public && (
-                            <View style={[styles.badge, styles.publicBadge]}>
-                              <Text style={styles.badgeText}>Public</Text>
-                            </View>
-                          )}
-                          {item.is_announcement && (
-                            <View
-                              style={[styles.badge, styles.announcementBadge]}
-                            >
-                              <Text style={styles.badgeText}>Announcement</Text>
-                            </View>
-                          )}
                         </View>
                       </View>
                     </View>
@@ -828,6 +765,139 @@ export default function AdminDashboard() {
                 </>
               )}
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Permissions Management Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={isPermissionsModalVisible}
+        onRequestClose={() => setPermissionsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, styles.permissionsModal]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {selectedGroupForPermissions?.name} - Message Permissions
+              </Text>
+              <TouchableOpacity
+                onPress={() => setPermissionsModalVisible(false)}
+                accessibilityLabel="Close permissions modal"
+              >
+                <Ionicons name="close" size={24} color="#1a1c1e" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.selectLabel}>Select Group</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.groupSelector}
+              >
+                {groups.map((group) => (
+                  <TouchableOpacity
+                    key={group.id}
+                    style={[
+                      styles.groupOption,
+                      selectedGroupForPermissions?.id === group.id &&
+                        styles.groupOptionSelected,
+                    ]}
+                    onPress={() => openPermissionsModal(group)}
+                  >
+                    <Text
+                      style={[
+                        styles.groupOptionText,
+                        selectedGroupForPermissions?.id === group.id &&
+                          styles.groupOptionTextSelected,
+                      ]}
+                    >
+                      {group.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              {selectedGroupForPermissions?.is_announcement ? (
+                <>
+                  <Text style={styles.permissionHelpText}>
+                    For announcement groups, only users with permission can send
+                    messages. Admins always have permission.
+                  </Text>
+
+                  {groupMembers.length === 0 ? (
+                    <Text style={styles.emptyText}>
+                      No members in this group
+                    </Text>
+                  ) : (
+                    groupMembers.map((member) => (
+                      <View key={member.id} style={styles.permissionItem}>
+                        <View style={styles.memberInfo}>
+                          <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>
+                              {member.full_name.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                          <View>
+                            <Text style={styles.memberName}>
+                              {member.full_name}
+                            </Text>
+                            <Text style={styles.memberEmail}>
+                              {member.email}
+                            </Text>
+                            <Text style={styles.memberRole}>{member.role}</Text>
+                          </View>
+                        </View>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.permissionToggle,
+                            (messagePermissions[member.id] ||
+                              member.role === "admin") &&
+                              styles.permissionEnabled,
+                          ]}
+                          onPress={() => {
+                            if (member.role !== "admin") {
+                              updateMessagePermission(
+                                selectedGroupForPermissions.id,
+                                member.id,
+                                !messagePermissions[member.id]
+                              );
+                            }
+                          }}
+                          disabled={
+                            member.role === "admin" ||
+                            permissionLoading ===
+                              `${selectedGroupForPermissions.id}-${member.id}`
+                          }
+                        >
+                          {permissionLoading ===
+                          `${selectedGroupForPermissions.id}-${member.id}` ? (
+                            <ActivityIndicator size="small" color="white" />
+                          ) : (
+                            <Text style={styles.permissionToggleText}>
+                              {member.role === "admin"
+                                ? "Admin"
+                                : messagePermissions[member.id]
+                                ? "Allowed"
+                                : "Denied"}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </>
+              ) : (
+                <Text style={styles.permissionHelpText}>
+                  This is a public group. All members can send messages freely.
+                </Text>
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1215,5 +1285,93 @@ const styles = StyleSheet.create({
   },
   optionSelected: {
     backgroundColor: "#007bff22",
+  },
+  permissionsModal: {
+    width: "95%",
+    maxHeight: "85%",
+  },
+  permissionHelpText: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 20,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  permissionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f3f4",
+  },
+  memberInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1a1c1e",
+    marginBottom: 2,
+  },
+  memberEmail: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 2,
+  },
+  memberRole: {
+    fontSize: 12,
+    color: "#888",
+    textTransform: "capitalize",
+  },
+  permissionToggle: {
+    backgroundColor: "#dc3545",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    minWidth: 80,
+    alignItems: "center",
+  },
+  permissionEnabled: {
+    backgroundColor: "#28a745",
+  },
+  permissionToggleText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  tertiaryButton: {
+    backgroundColor: "#6c757d",
+    marginTop: 8,
+  },
+  tertiaryButtonText: {
+    color: "#fff",
+  },
+  groupSelector: {
+    marginBottom: 20,
+    maxHeight: 50,
+  },
+  groupOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: "#dee2e6",
+  },
+  groupOptionSelected: {
+    backgroundColor: "#007AFF",
+    borderColor: "#007AFF",
+  },
+  groupOptionText: {
+    color: "#495057",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  groupOptionTextSelected: {
+    color: "white",
   },
 });

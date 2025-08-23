@@ -1,14 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import debounce from "lodash/debounce";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -34,97 +37,128 @@ interface GroupMember {
   role: string;
 }
 
+interface User {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+}
+
+interface GroupMemberResponse {
+  profiles: GroupMember;
+}
+
+interface GroupMessagePermissionResponse {
+  user_id: string;
+  can_send_messages: boolean;
+}
+
 export default function GroupsScreen() {
   const [groups, setGroups] = useState<Group[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState<string | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
-  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [messagePermissions, setMessagePermissions] = useState<{
+    [key: string]: boolean;
+  }>({});
+  const [permissionLoading, setPermissionLoading] = useState<string | null>(
+    null
+  );
+
   const { user, isAdmin } = useAuth();
   const router = useRouter();
 
-  useEffect(() => {
-    fetchGroups();
-  }, []);
+  // Group creation state
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupDescription, setNewGroupDescription] = useState("");
+  const [newGroupIsPublic, setNewGroupIsPublic] = useState(true);
+  const [newGroupIsAnnouncement, setNewGroupIsAnnouncement] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
 
-  useEffect(() => {
-    // Add event listener
-    const subscription = EventRegister.addEventListener("refreshGroups", () => {
-      fetchGroups(); // quietly refresh
-    });
+  // User assignment state
+  const [selectedUser, setSelectedUser] = useState("");
+  const [selectedGroupForAssignment, setSelectedGroupForAssignment] =
+    useState("");
+  const [userSearchQuery, setUserSearchQuery] = useState("");
 
-    // Cleanup properly
-    return () => {
-      if (typeof subscription === "string") {
-        EventRegister.removeEventListener(subscription);
+  // Modal state management
+  const [modalState, setModalState] = useState<{
+    type: "none" | "group" | "create" | "addUser" | "permissions";
+    group: Group | null;
+  }>({ type: "none", group: null });
+
+  const openModal = useCallback(
+    (type: typeof modalState.type, group: Group | null = null) => {
+      setModalState({ type, group });
+      if (type === "addUser") {
+        const groupMemberIds = new Set(groupMembers.map((m) => m.id));
+        const availableUsers = allUsers.filter(
+          (user) => !groupMemberIds.has(user.id)
+        );
+        setFilteredUsers(availableUsers);
+        setUserSearchQuery("");
       }
-    };
-  }, [user?.id]);
+    },
+    [allUsers, groupMembers, modalState]
+  );
+
+  const closeModal = useCallback(() => {
+    setModalState({ type: "none", group: null });
+    setSelectedUser("");
+    setSelectedGroupForAssignment("");
+    setUserSearchQuery("");
+    setFilteredUsers(allUsers);
+    setGroupMembers([]);
+    setMessagePermissions({});
+    setPermissionLoading(null);
+  }, [allUsers]);
 
   const fetchGroups = async () => {
     try {
+      setLoading(true);
       let groupsData;
 
       if (isAdmin) {
-        // Admin can see ALL groups
-        const { data: allGroups, error: groupsError } = await supabase
+        const { data, error } = await supabase
           .from("groups")
           .select("*")
           .order("created_at", { ascending: false });
-
-        if (groupsError) throw groupsError;
-        groupsData = allGroups;
+        if (error) throw new Error(`Failed to fetch groups: ${error.message}`);
+        groupsData = data || [];
       } else {
-        // Regular users: Only get groups they're members of
-        const { data: userGroups, error: groupsError } = await supabase
+        const { data, error } = await supabase
           .from("group_members")
-          .select(
-            `
-          groups (
-            id,
-            name,
-            description,
-            is_public,
-            is_announcement,
-            created_at
-          )
-        `
-          )
+          .select("groups (*)")
           .eq("user_id", user?.id)
           .order("created_at", { foreignTable: "groups", ascending: false });
-
-        if (groupsError) throw groupsError;
-
-        // Extract groups from the nested response
-        groupsData =
-          userGroups?.map((item) => item.groups).filter(Boolean) || [];
+        if (error)
+          throw new Error(`Failed to fetch user groups: ${error.message}`);
+        groupsData = data?.map((item) => item.groups).filter(Boolean) || [];
       }
 
-      // Get user's memberships to show join/leave status (for admin view)
-      const { data: userMemberships, error: membersError } = await supabase
+      const { data: userMemberships, error: membershipsError } = await supabase
         .from("group_members")
         .select("group_id")
         .eq("user_id", user?.id);
-
-      if (membersError) throw membersError;
+      if (membershipsError) throw membershipsError;
 
       const userMemberGroupIds = new Set(
         userMemberships?.map((m) => m.group_id) || []
       );
 
-      // Get member counts for each group
       const groupsWithDetails = await Promise.all(
-        (groupsData || []).map(async (group) => {
-          const { count, error: countError } = await supabase
+        groupsData.map(async (group) => {
+          const { count, error } = await supabase
             .from("group_members")
             .select("*", { count: "exact", head: true })
             .eq("group_id", group.id);
-
+          if (error)
+            throw new Error(`Failed to fetch member count: ${error.message}`);
           return {
             ...group,
             is_member: userMemberGroupIds.has(group.id),
-            member_count: countError ? 0 : count || 0,
+            member_count: count || 0,
           };
         })
       );
@@ -132,159 +166,250 @@ export default function GroupsScreen() {
       setGroups(groupsWithDetails);
     } catch (error) {
       console.error("Error fetching groups:", error);
-      Alert.alert("Error", "Failed to load groups");
+      Alert.alert("Error", "Unable to load groups. Please try again later.");
     } finally {
       setLoading(false);
     }
   };
 
+  const debouncedFetchGroups = useCallback(debounce(fetchGroups, 300), [
+    isAdmin,
+    user?.id,
+  ]);
+
+  const fetchAllUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw new Error(`Failed to fetch users: ${error.message}`);
+      setAllUsers(data || []);
+      setFilteredUsers(data || []);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+    }
+  };
+
   const fetchGroupMembers = async (groupId: string) => {
     try {
-      // Use service role for admin operations to avoid RLS issues
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members?select=profiles(id,email,full_name,role)&group_id=eq.${groupId}`,
-        {
-          headers: {
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const members = data
-        .map((item: any) => item.profiles)
+      const { data, error } = await supabase
+        .from("group_members")
+        .select("profiles(id,email,full_name,role)")
+        .eq("group_id", groupId);
+      if (error) throw new Error(`Failed to fetch members: ${error.message}`);
+      const members = (data as unknown as GroupMemberResponse[])
+        .map((item) => item.profiles)
         .filter(Boolean) as GroupMember[];
       setGroupMembers(members);
+      await fetchMessagePermissions(groupId);
     } catch (error) {
       console.error("Error fetching group members:", error);
-
-      // Fallback: try regular query (may fail due to RLS)
-      try {
-        const { data, error: supabaseError } = await supabase
-          .from("group_members")
-          .select("profiles (id, email, full_name, role)")
-          .eq("group_id", groupId);
-
-        if (supabaseError) throw supabaseError;
-
-        const members = data
-          ?.map((item) => item.profiles)
-          .filter(Boolean) as unknown as GroupMember[];
-        setGroupMembers(members);
-      } catch (fallbackError) {
-        console.error("Fallback also failed:", fallbackError);
-        Alert.alert("Error", "Failed to load group members");
-      }
+      Alert.alert("Error", "Failed to load group members");
     }
   };
 
-  const joinGroup = async (groupId: string) => {
-    setJoining(groupId);
+  const fetchMessagePermissions = async (groupId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("group_message_permissions")
+        .select("user_id, can_send_messages")
+        .eq("group_id", groupId);
+      if (error)
+        throw new Error(`Failed to fetch permissions: ${error.message}`);
+      const permissionsMap: { [key: string]: boolean } = {};
+      ((data as GroupMessagePermissionResponse[]) || []).forEach((perm) => {
+        permissionsMap[perm.user_id] = perm.can_send_messages;
+      });
+      setMessagePermissions(permissionsMap);
+    } catch (error) {
+      console.error("Error fetching permissions:", error);
+    }
+  };
+
+  const createGroup = async () => {
+    if (!newGroupName.trim()) {
+      Alert.alert("Error", "Group name is required");
+      return;
+    }
+
+    setCreateLoading(true);
+    try {
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError || !authUser) throw new Error("No authenticated user");
+
+      const { data: groupData, error: insertError } = await supabase
+        .from("groups")
+        .insert({
+          name: newGroupName,
+          description: newGroupDescription,
+          is_public: newGroupIsPublic,
+          is_announcement: newGroupIsAnnouncement,
+          created_by: authUser.id,
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+
+      const { error: memberError } = await supabase
+        .from("group_members")
+        .insert({ user_id: authUser.id, group_id: groupData.id });
+      if (memberError) throw memberError;
+
+      Alert.alert("Success", "Group created successfully!");
+      setNewGroupName("");
+      setNewGroupDescription("");
+      setNewGroupIsPublic(true);
+      setNewGroupIsAnnouncement(false);
+      closeModal();
+      debouncedFetchGroups();
+    } catch (error: any) {
+      console.error("Group creation error:", error);
+      Alert.alert("Error", error.message || "Failed to create group");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const addUserToGroup = async () => {
+    if (!selectedUser) {
+      Alert.alert("Error", "Please select a user");
+      return;
+    }
+
+    const groupId = modalState.group?.id || selectedGroupForAssignment;
+    if (!groupId) {
+      Alert.alert("Error", "No group selected");
+      return;
+    }
 
     try {
-      const { error } = await supabase.from("group_members").insert([
-        {
-          user_id: user?.id,
-          group_id: groupId,
-        },
-      ]);
+      const { error } = await supabase.from("group_members").insert({
+        user_id: selectedUser,
+        group_id: groupId,
+      });
+      if (error) throw new Error(`Failed to add user: ${error.message}`);
 
-      if (error) throw error;
-
-      Alert.alert("Success", "Joined group successfully!");
-      fetchGroups();
+      Alert.alert("Success", "User added to group successfully!");
+      setSelectedUser("");
+      setUserSearchQuery("");
+      setFilteredUsers(allUsers);
+      closeModal();
+      if (modalState.group) {
+        await fetchGroupMembers(modalState.group.id);
+        openModal("group", modalState.group);
+      }
+      debouncedFetchGroups();
     } catch (error: any) {
-      console.error("Error joining group:", error);
-      Alert.alert("Error", error.message || "Failed to join group");
-    } finally {
-      setJoining(null);
+      console.error("Add user error:", error);
+      Alert.alert("Error", error.message || "Failed to add user to group");
     }
   };
 
-  const leaveGroup = async (groupId: string) => {
+  const removeUserFromGroup = async (userId: string) => {
+    if (!modalState.group) return;
+
     try {
       const { error } = await supabase
         .from("group_members")
         .delete()
-        .eq("user_id", user?.id)
-        .eq("group_id", groupId);
+        .eq("user_id", userId)
+        .eq("group_id", modalState.group.id);
+      if (error) throw new Error(`Failed to remove user: ${error.message}`);
 
-      if (error) throw error;
-
-      Alert.alert("Success", "Left group successfully!");
-      fetchGroups();
+      Alert.alert("Success", "User removed from group");
+      await fetchGroupMembers(modalState.group.id);
+      debouncedFetchGroups();
     } catch (error: any) {
-      console.error("Error leaving group:", error);
-      Alert.alert("Error", error.message || "Failed to leave group");
+      console.error("Remove user error:", error);
+      Alert.alert("Error", error.message || "Failed to remove user");
+    }
+  };
+
+  const updateMessagePermission = async (userId: string, canSend: boolean) => {
+    if (!modalState.group) return;
+
+    const loadingKey = `${modalState.group.id}-${userId}`;
+    setPermissionLoading(loadingKey);
+
+    try {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      if (!authUser) throw new Error("No authenticated user");
+
+      const { error } = await supabase.from("group_message_permissions").upsert(
+        {
+          group_id: modalState.group.id,
+          user_id: userId,
+          can_send_messages: canSend,
+          granted_by: authUser.id,
+        },
+        { onConflict: "group_id,user_id" }
+      );
+      if (error)
+        throw new Error(`Failed to update permission: ${error.message}`);
+
+      setMessagePermissions((prev) => ({ ...prev, [userId]: canSend }));
+      Alert.alert("Success", "Message permission updated!");
+    } catch (error: any) {
+      console.error("Permission update error:", error);
+      Alert.alert("Error", error.message || "Failed to update permission");
+    } finally {
+      setPermissionLoading(null);
+    }
+  };
+
+  const handleUserSearch = (query: string) => {
+    setUserSearchQuery(query);
+    const groupMemberIds = new Set(groupMembers.map((m) => m.id));
+    const availableUsers = allUsers.filter(
+      (user) => !groupMemberIds.has(user.id)
+    );
+    if (query.trim() === "") {
+      setFilteredUsers(availableUsers);
+    } else {
+      const lowerQuery = query.toLowerCase();
+      setFilteredUsers(
+        availableUsers.filter(
+          (user) =>
+            user.full_name.toLowerCase().includes(lowerQuery) ||
+            user.email.toLowerCase().includes(lowerQuery)
+        )
+      );
     }
   };
 
   const viewGroupDetails = async (group: Group) => {
     if (!isAdmin) {
-      // For regular users, navigate to chat
       router.push(`/chat/${group.id}?name=${encodeURIComponent(group.name)}`);
       return;
     }
 
-    // For admins, show group details modal
-    setSelectedGroup(group);
+    openModal("group", group);
     await fetchGroupMembers(group.id);
-    setShowGroupModal(true);
   };
 
-  const removeUserFromGroup = async (userId: string) => {
-    if (!selectedGroup) return;
-
-    try {
-      // Use service role for admin operations
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members?user_id=eq.${userId}&group_id=eq.${selectedGroup.id}`,
-        {
-          method: "DELETE",
-          headers: {
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "return=minimal",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      Alert.alert("Success", "User removed from group");
-      fetchGroupMembers(selectedGroup.id);
-      fetchGroups();
-    } catch (error: any) {
-      console.error("Error removing user:", error);
-
-      // Fallback: try regular delete
-      try {
-        const { error: supabaseError } = await supabase
-          .from("group_members")
-          .delete()
-          .eq("user_id", userId)
-          .eq("group_id", selectedGroup.id);
-
-        if (supabaseError) throw supabaseError;
-
-        Alert.alert("Success", "User removed from group");
-        fetchGroupMembers(selectedGroup.id);
-        fetchGroups();
-      } catch (fallbackError) {
-        console.error("Fallback also failed:", fallbackError);
-        Alert.alert("Error", error.message || "Failed to remove user");
-      }
+  useEffect(() => {
+    debouncedFetchGroups();
+    if (isAdmin) {
+      fetchAllUsers();
     }
-  };
+    return () => debouncedFetchGroups.cancel();
+  }, [debouncedFetchGroups, isAdmin]);
+
+  useEffect(() => {
+    const listener = EventRegister.addEventListener("refreshGroups", () => {
+      debouncedFetchGroups();
+    });
+
+    return () => {
+      EventRegister.removeEventListener(listener as string);
+    };
+  }, [debouncedFetchGroups, user?.id]);
 
   if (loading) {
     return (
@@ -300,13 +425,23 @@ export default function GroupsScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <Text style={styles.title}>
-          {isAdmin ? "All Groups" : "Available Groups"}
-        </Text>
+        <View style={styles.header}>
+          <Text style={styles.title}>
+            {isAdmin ? "Group Management" : "Your Groups"}
+          </Text>
+          {isAdmin && (
+            <TouchableOpacity
+              style={styles.createButton}
+              onPress={() => openModal("create")}
+            >
+              <Ionicons name="add" size={20} color="white" />
+              <Text style={styles.createButtonText}>Create Group</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         <Text style={styles.subtitle}>
-          {isAdmin
-            ? "Manage all groups and members"
-            : "Join groups to start chatting with your team"}
+          {isAdmin ? "Manage all groups and members" : "Your joined groups"}
         </Text>
 
         {groups.length === 0 ? (
@@ -315,8 +450,8 @@ export default function GroupsScreen() {
             <Text style={styles.emptyText}>No groups available yet</Text>
             <Text style={styles.emptySubtext}>
               {isAdmin
-                ? "Create groups in the Admin dashboard"
-                : "Groups will appear here once they are created"}
+                ? "Create your first group to get started"
+                : "No groups available"}
             </Text>
           </View>
         ) : (
@@ -351,8 +486,7 @@ export default function GroupsScreen() {
                     {item.member_count} member
                     {item.member_count !== 1 ? "s" : ""}
                   </Text>
-
-                  {isAdmin ? (
+                  {isAdmin && (
                     <View style={styles.adminBadge}>
                       <Ionicons
                         name="shield-checkmark"
@@ -361,117 +495,369 @@ export default function GroupsScreen() {
                       />
                       <Text style={styles.adminBadgeText}>Manage</Text>
                     </View>
-                  ) : item.is_member ? (
-                    <TouchableOpacity
-                      style={styles.leaveButton}
-                      onPress={() => leaveGroup(item.id)}
-                    >
-                      <Text style={styles.leaveButtonText}>Leave</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.joinButton}
-                      onPress={() => joinGroup(item.id)}
-                      disabled={joining === item.id}
-                    >
-                      {joining === item.id ? (
-                        <ActivityIndicator size="small" color="white" />
-                      ) : (
-                        <Text style={styles.joinButtonText}>Join</Text>
-                      )}
-                    </TouchableOpacity>
                   )}
                 </View>
               </TouchableOpacity>
             )}
             contentContainerStyle={styles.listContent}
+            initialNumToRender={10}
+            windowSize={5}
           />
         )}
       </View>
 
-      {/* Group Details Modal for Admins */}
-      <Modal
-        visible={showGroupModal}
-        animationType="slide"
-        onRequestClose={() => setShowGroupModal(false)}
-      >
+      {/* Group Details Modal */}
+      <Modal visible={modalState.type === "group"} animationType="slide">
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity
-              onPress={() => setShowGroupModal(false)}
-              style={styles.closeButton}
-            >
-              <Ionicons name="close" size={24} color="#333" />
+            <TouchableOpacity onPress={closeModal}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Group Details</Text>
+            <Text style={styles.modalTitle}>{modalState.group?.name}</Text>
             <View style={{ width: 24 }} />
           </View>
 
-          {selectedGroup && (
-            <View style={styles.modalContent}>
-              <View style={styles.groupInfo}>
-                <Text style={styles.groupInfoName}>{selectedGroup.name}</Text>
-                <Text style={styles.groupInfoDescription}>
-                  {selectedGroup.description}
+          <ScrollView style={styles.modalContent}>
+            <View style={styles.groupInfo}>
+              <Text style={styles.groupInfoDescription}>
+                {modalState.group?.description || "No description"}
+              </Text>
+              <View style={styles.groupMeta}>
+                <Text style={styles.groupMetaText}>
+                  {modalState.group?.is_public ? "Public" : "Private"} Group
                 </Text>
-                <View style={styles.groupMeta}>
-                  <Text style={styles.groupMetaText}>
-                    {selectedGroup.is_public ? "Public" : "Private"} Group
-                  </Text>
-                  <Text style={styles.groupMetaText}>
-                    {selectedGroup.is_announcement
-                      ? "Announcements Only"
-                      : "Chat Group"}
-                  </Text>
-                  <Text style={styles.groupMetaText}>
-                    {groupMembers.length} Members
-                  </Text>
-                </View>
+                <Text style={styles.groupMetaText}>
+                  {modalState.group?.is_announcement ? "Announcements" : "Chat"}
+                </Text>
+                <Text style={styles.groupMetaText}>
+                  {groupMembers.length} Members
+                </Text>
               </View>
+            </View>
 
-              <Text style={styles.membersTitle}>Group Members</Text>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => openModal("addUser", modalState.group)}
+              >
+                <Ionicons name="person-add" size={20} color="#007AFF" />
+                <Text style={styles.actionButtonText}>Add User</Text>
+              </TouchableOpacity>
 
-              {groupMembers.length === 0 ? (
-                <Text style={styles.noMembersText}>
-                  No members in this group
-                </Text>
-              ) : (
-                <FlatList
-                  data={groupMembers}
-                  keyExtractor={(item) => item.id}
-                  renderItem={({ item }) => (
-                    <View style={styles.memberItem}>
-                      <View style={styles.memberInfo}>
-                        <View style={styles.avatar}>
-                          <Text style={styles.avatarText}>
-                            {item.full_name.charAt(0).toUpperCase()}
-                          </Text>
-                        </View>
-                        <View>
-                          <Text style={styles.memberName}>
-                            {item.full_name}
-                          </Text>
-                          <Text style={styles.memberEmail}>{item.email}</Text>
-                          <Text style={styles.memberRole}>{item.role}</Text>
-                        </View>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => removeUserFromGroup(item.id)}
-                        style={styles.removeButton}
-                      >
-                        <Ionicons
-                          name="person-remove"
-                          size={20}
-                          color="#dc3545"
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                />
+              {modalState.group?.is_announcement && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => openModal("permissions", modalState.group)}
+                >
+                  <Ionicons name="keypad" size={20} color="#28a745" />
+                  <Text style={styles.actionButtonText}>Permissions</Text>
+                </TouchableOpacity>
               )}
             </View>
-          )}
+
+            <Text style={styles.membersTitle}>Group Members</Text>
+
+            {groupMembers.length === 0 ? (
+              <Text style={styles.noMembersText}>No members in this group</Text>
+            ) : (
+              groupMembers.map((member) => (
+                <View key={member.id} style={styles.memberItem}>
+                  <View style={styles.memberInfo}>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {member.full_name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.memberName}>{member.full_name}</Text>
+                      <Text style={styles.memberEmail}>{member.email}</Text>
+                      <Text style={styles.memberRole}>{member.role}</Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => removeUserFromGroup(member.id)}
+                    style={styles.removeButton}
+                  >
+                    <Ionicons name="person-remove" size={20} color="#dc3545" />
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      {/* Create Group Modal */}
+      <Modal
+        visible={modalState.type === "create"}
+        animationType="slide"
+        transparent
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalDialog}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create New Group</Text>
+              <TouchableOpacity onPress={closeModal}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              <TextInput
+                placeholder="Group Name"
+                value={newGroupName}
+                onChangeText={setNewGroupName}
+                style={styles.input}
+                placeholderTextColor="#888"
+              />
+              <TextInput
+                placeholder="Description (Optional)"
+                value={newGroupDescription}
+                onChangeText={setNewGroupDescription}
+                style={[styles.input, styles.textArea]}
+                placeholderTextColor="#888"
+                multiline
+              />
+
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Public Group</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.switch,
+                    newGroupIsPublic && styles.switchActive,
+                  ]}
+                  onPress={() => setNewGroupIsPublic(!newGroupIsPublic)}
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      newGroupIsPublic && styles.switchThumbActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Announcement Group</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.switch,
+                    newGroupIsAnnouncement && styles.switchActive,
+                  ]}
+                  onPress={() =>
+                    setNewGroupIsAnnouncement(!newGroupIsAnnouncement)
+                  }
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      newGroupIsAnnouncement && styles.switchThumbActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, createLoading && styles.buttonDisabled]}
+                onPress={createGroup}
+                disabled={createLoading}
+              >
+                <Text style={styles.buttonText}>
+                  {createLoading ? "Creating..." : "Create Group"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add User to Group Modal */}
+      <Modal
+        visible={modalState.type === "addUser"}
+        animationType="slide"
+        transparent
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalDialog}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Add User to {modalState.group?.name || "Group"}
+              </Text>
+              <TouchableOpacity onPress={closeModal}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalContent}>
+              {allUsers.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No users available</Text>
+                  <TouchableOpacity
+                    style={[styles.button, styles.secondaryButton]}
+                    onPress={closeModal}
+                  >
+                    <Text
+                      style={[styles.buttonText, styles.secondaryButtonText]}
+                    >
+                      Close
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    placeholder="Search users by name or email"
+                    value={userSearchQuery}
+                    onChangeText={handleUserSearch}
+                    style={styles.searchInput}
+                    autoCapitalize="none"
+                    placeholderTextColor="#888"
+                  />
+
+                  <ScrollView
+                    style={styles.scrollBox}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {filteredUsers.map((user) => (
+                      <TouchableOpacity
+                        key={user.id}
+                        style={[
+                          styles.option,
+                          selectedUser === user.id && styles.optionSelected,
+                        ]}
+                        onPress={() => setSelectedUser(user.id)}
+                      >
+                        <View style={styles.userOptionContent}>
+                          <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>
+                              {user.full_name.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                          <View>
+                            <Text style={styles.optionText}>
+                              {user.full_name}
+                            </Text>
+                            <Text style={styles.optionSubtext}>
+                              {user.email}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                    {filteredUsers.length === 0 && (
+                      <Text style={styles.noResultsText}>No users found</Text>
+                    )}
+                  </ScrollView>
+
+                  <View style={styles.modalButtonContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.button,
+                        styles.secondaryButton,
+                        styles.cancelButton,
+                      ]}
+                      onPress={closeModal}
+                    >
+                      <Text
+                        style={[styles.buttonText, styles.secondaryButtonText]}
+                      >
+                        Cancel
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.button,
+                        !selectedUser && styles.buttonDisabled,
+                      ]}
+                      onPress={addUserToGroup}
+                      disabled={!selectedUser}
+                    >
+                      <Text style={styles.buttonText}>Add to Group</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Permissions Modal */}
+      <Modal
+        visible={modalState.type === "permissions"}
+        animationType="slide"
+        transparent
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalDialog, styles.permissionsDialog]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Message Permissions</Text>
+              <TouchableOpacity onPress={closeModal}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              <Text style={styles.permissionHelpText}>
+                For announcement groups, only users with permission can send
+                messages. Admins always have permission.
+              </Text>
+
+              {groupMembers.map((member) => (
+                <View key={member.id} style={styles.permissionItem}>
+                  <View style={styles.memberInfo}>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {member.full_name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.memberName}>{member.full_name}</Text>
+                      <Text style={styles.memberEmail}>{member.email}</Text>
+                      <Text style={styles.memberRole}>{member.role}</Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.permissionToggle,
+                      (messagePermissions[member.id] ||
+                        member.role === "admin") &&
+                        styles.permissionEnabled,
+                    ]}
+                    onPress={() => {
+                      if (member.role !== "admin") {
+                        updateMessagePermission(
+                          member.id,
+                          !messagePermissions[member.id]
+                        );
+                      }
+                    }}
+                    disabled={
+                      member.role === "admin" ||
+                      permissionLoading ===
+                        `${modalState.group?.id}-${member.id}`
+                    }
+                  >
+                    {permissionLoading ===
+                    `${modalState.group?.id}-${member.id}` ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={styles.permissionToggleText}>
+                        {member.role === "admin"
+                          ? "Admin"
+                          : messagePermissions[member.id]
+                          ? "Allowed"
+                          : "Denied"}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -486,21 +872,39 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 8,
   },
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    marginBottom: 8,
     color: "#333",
+  },
+  createButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  createButtonText: {
+    color: "white",
+    fontWeight: "600",
   },
   subtitle: {
     fontSize: 16,
     color: "#666",
     marginBottom: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   emptyContainer: {
     flex: 1,
@@ -601,40 +1005,39 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginLeft: 4,
   },
-  joinButton: {
-    backgroundColor: "#007AFF",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  joinButtonText: {
-    color: "white",
-    fontWeight: "600",
-  },
-  leaveButton: {
-    backgroundColor: "#dc3545",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  leaveButtonText: {
-    color: "white",
-    fontWeight: "600",
-  },
   modalContainer: {
     flex: 1,
     backgroundColor: "white",
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalDialog: {
+    width: "100%",
+    maxHeight: "80%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  permissionsDialog: {
+    maxHeight: "90%",
+  },
   modalHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    padding: 20,
+    alignItems: "center",
+    padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e9ecef",
-  },
-  closeButton: {
-    padding: 4,
+    borderBottomColor: "#e0e2e5",
   },
   modalTitle: {
     fontSize: 20,
@@ -642,17 +1045,10 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   modalContent: {
-    flex: 1,
-    padding: 20,
+    padding: 16,
   },
   groupInfo: {
     marginBottom: 24,
-  },
-  groupInfoName: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
   },
   groupInfoDescription: {
     fontSize: 16,
@@ -672,6 +1068,27 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     fontSize: 12,
     color: "#495057",
+  },
+  actionButtons: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 24,
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f8f9fa",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+    gap: 8,
+  },
+  actionButtonText: {
+    fontWeight: "600",
+    color: "#333",
   },
   membersTitle: {
     fontSize: 18,
@@ -730,5 +1147,156 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     padding: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#d0d4d8",
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 8,
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: "#d0d4d8",
+    backgroundColor: "#fff",
+    padding: 12,
+    borderRadius: 8,
+    fontSize: 16,
+    marginBottom: 16,
+    color: "black",
+  },
+  textArea: {
+    height: 100,
+    textAlignVertical: "top",
+  },
+  switchRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  switchLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#1a1c1e",
+  },
+  switch: {
+    width: 56,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#d0d4d8",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  switchActive: {
+    backgroundColor: "#007AFF",
+  },
+  switchThumb: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#fff",
+  },
+  switchThumbActive: {
+    transform: [{ translateX: 24 }],
+  },
+  button: {
+    backgroundColor: "#007AFF",
+    padding: 16,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  buttonDisabled: {
+    backgroundColor: "#b0b8c1",
+  },
+  buttonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  secondaryButton: {
+    backgroundColor: "#f8f9fa",
+    borderWidth: 1,
+    borderColor: "#d0d4d8",
+  },
+  secondaryButtonText: {
+    color: "#1a1c1e",
+  },
+  cancelButton: {
+    flex: 1,
+    marginRight: 8,
+  },
+  scrollBox: {
+    maxHeight: 200,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#d0d4d8",
+    borderRadius: 8,
+    backgroundColor: "#fff",
+  },
+  option: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderColor: "#eee",
+  },
+  userOptionContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  optionSelected: {
+    backgroundColor: "#007bff22",
+  },
+  optionText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#1a1c1e",
+  },
+  optionSubtext: {
+    fontSize: 14,
+    color: "#666",
+  },
+  noResultsText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    padding: 16,
+  },
+  modalButtonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 16,
+  },
+  permissionHelpText: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 20,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  permissionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f3f4",
+  },
+  permissionToggle: {
+    backgroundColor: "#dc3545",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    minWidth: 80,
+    alignItems: "center",
+  },
+  permissionEnabled: {
+    backgroundColor: "#28a745",
+  },
+  permissionToggleText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "600",
   },
 });
