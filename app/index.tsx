@@ -10,8 +10,13 @@ export default function Index() {
   const [adminExists, setAdminExists] = useState(false);
 
   useEffect(() => {
-    checkAdminExists();
-  }, []);
+    // Only check admin if no user is logged in
+    if (!user) {
+      checkAdminExists();
+    } else {
+      setCheckingAdmin(false);
+    }
+  }, [user]);
 
   const checkAdminExists = async () => {
     try {
@@ -23,7 +28,7 @@ export default function Index() {
 
       if (error) {
         console.error("Error checking admin:", error);
-        setAdminExists(true); // Assume admin exists to prevent issues
+        setAdminExists(true); // fallback: assume admin exists
       } else {
         setAdminExists(data && data.length > 0);
       }
@@ -35,6 +40,7 @@ export default function Index() {
     }
   };
 
+  // Loading state while auth or admin check is happening
   if (authLoading || checkingAdmin) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -44,10 +50,16 @@ export default function Index() {
     );
   }
 
+  // User is logged in → go to main app
   if (user) {
     return <Redirect href="/(tabs)" />;
   }
 
-  // Always redirect to general login page
+  // No user → decide login vs setup
+  if (!adminExists) {
+    return <Redirect href="/(auth)/admin-signup" />; // first-time setup
+  }
+
+  // Default → login page
   return <Redirect href="/(auth)/login" />;
 }

@@ -4,13 +4,13 @@ import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
+  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  SafeAreaView,
 } from "react-native";
-import { EventRegister } from "react-native-event-listeners";
+// import { EventRegister } from "react-native-event-listeners";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
 
@@ -29,8 +29,6 @@ export default function ChatsScreen() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const { user } = useAuth();
-
-
 
   // Run once on mount
   useEffect(() => {
@@ -115,7 +113,9 @@ export default function ChatsScreen() {
   };
 
   const navigateToChat = (chatId: string, chatName: string) => {
-    router.push(`/chat/${chatId}?name=${encodeURIComponent(chatName || "Chat")}`);
+    router.push(
+      `/chat/${chatId}?name=${encodeURIComponent(chatName || "Chat")}`
+    );
   };
 
   if (loading) {
@@ -167,19 +167,32 @@ export default function ChatsScreen() {
                 />
               </View>
               <View style={styles.chatContent}>
-                <Text style={styles.chatName}>{item.name || "Untitled Chat"}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text style={styles.chatName}>
+                    {item.name || "Untitled Chat"}
+                  </Text>
+                  {item.is_announcement && (
+                    <Ionicons
+                      name="lock-closed"
+                      size={14}
+                      color="#666"
+                      style={{ marginLeft: 6 }}
+                    />
+                  )}
+                </View>
                 <Text style={styles.lastMessage} numberOfLines={1}>
                   {item.last_message || "No messages"}
                 </Text>
               </View>
+
               <View style={styles.chatMeta}>
                 <Text style={styles.time}>
-                  {item.last_message_time ? 
-                    new Date(item.last_message_time).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }) : "--:--"
-                  }
+                  {item.last_message_time
+                    ? new Date(item.last_message_time).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "--:--"}
                 </Text>
                 {item.unread_count > 0 && (
                   <View style={styles.unreadBadge}>

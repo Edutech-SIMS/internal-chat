@@ -471,10 +471,15 @@ export default function GroupsScreen() {
                       <Text style={styles.badgeText}>Announcements</Text>
                     </View>
                   )}
-                  {!item.is_public && (
+                  {!item.is_public ? (
                     <View style={styles.privateBadge}>
                       <Ionicons name="lock-closed" size={12} color="white" />
                       <Text style={styles.badgeText}>Private</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.publicBadge}>
+                      <Ionicons name="globe-outline" size={12} color="white" />
+                      <Text style={styles.badgeText}>Public</Text>
                     </View>
                   )}
                 </View>
@@ -1298,5 +1303,15 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 12,
     fontWeight: "600",
+  },
+
+  publicBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "green",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 8,
   },
 });

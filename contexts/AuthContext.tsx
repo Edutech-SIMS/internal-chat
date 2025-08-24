@@ -3,20 +3,31 @@ import { useRouter } from "expo-router";
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+interface Profile {
+  id: string;
+  full_name: string | null;
+  role: string | null;
+  avatar_url?: string | null;
+}
+
 interface AuthContextType {
-  user: User | null;
+  user: User | null; // only auth user (id/email)
   session: Session | null;
   loading: boolean;
+  profile: Profile | null; // full profile data
   isAdmin: boolean;
-  checkAdminRole: (userId: string) => Promise<boolean>;
+  refreshProfile: () => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   session: null,
   loading: true,
+  profile: null,
   isAdmin: false,
-  checkAdminRole: async () => false,
+  refreshProfile: async () => {},
+  signOut: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -26,101 +37,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
-  // In your AuthContext, make sure loading state is properly managed
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const initAuth = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      setUser(data.session?.user ?? null);
 
-      if (session?.user) {
-        await checkAdminRole(session.user.id);
+      if (data.session?.user) {
+        await fetchProfile(data.session.user.id);
       }
 
       setLoading(false);
-    });
+    };
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    initAuth();
 
-      if (session?.user) {
-        await checkAdminRole(session.user.id);
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
 
-        if (event === "SIGNED_IN") {
-          router.replace("/(tabs)");
+        if (session?.user) {
+          await fetchProfile(session.user.id);
+          if (event === "SIGNED_IN") {
+            router.replace("/(tabs)");
+          }
+        } else {
+          setProfile(null);
         }
+
+        setLoading(false);
       }
+    );
 
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  const checkAdminRole = async (userId: string): Promise<boolean> => {
+  const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("role")
+        .select("*")
         .eq("id", userId)
         .single();
 
-      if (error) {
-        console.error("Error checking admin role:", error);
-        return false;
-      }
-
-      const adminStatus = data?.role === "admin";
-      setIsAdmin(adminStatus);
-      return adminStatus;
-    } catch (error) {
-      console.error("Error checking admin role:", error);
-      return false;
+      if (error) throw error;
+      setProfile(data);
+    } catch (err) {
+      console.error("Error fetching profile:", err);
+      setProfile(null);
     }
   };
 
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+  const refreshProfile = async () => {
+    if (user) await fetchProfile(user.id);
+  };
 
-      if (session?.user) {
-        await checkAdminRole(session.user.id);
-      }
-
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        await checkAdminRole(session.user.id);
-
-        // Redirect to appropriate page after auth state change
-        if (event === "SIGNED_IN") {
-          router.replace("/(tabs)");
-        }
-      }
-
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+    } catch (err) {
+      console.error("Error signing out:", err);
+    }
+  };
 
   return (
     <AuthContext.Provider
-      value={{ user, session, loading, isAdmin, checkAdminRole }}
+      value={{
+        user,
+        session,
+        loading,
+        profile,
+        isAdmin: profile?.role === "admin",
+        refreshProfile,
+        signOut,
+      }}
     >
       {children}
     </AuthContext.Provider>

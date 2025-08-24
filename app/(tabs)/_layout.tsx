@@ -1,20 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { ActivityIndicator, Text, View } from "react-native";
 import { EventRegister } from "react-native-event-listeners";
 import { useAuth } from "../../contexts/AuthContext";
 
 export default function TabLayout() {
-  const { isAdmin, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 10 }}>Loading...</Text>
-      </View>
-    );
-  }
+  const { isAdmin } = useAuth(); // no loading/user redirect here
 
   return (
     <Tabs screenOptions={{ headerShown: true }}>
@@ -27,10 +17,7 @@ export default function TabLayout() {
           ),
         }}
         listeners={{
-          tabPress: () => {
-            // 🔥 tell ChatsScreen to quietly refresh
-            EventRegister.emit("refreshChats");
-          },
+          tabPress: () => EventRegister.emit("refreshChats"),
         }}
       />
       <Tabs.Screen
@@ -42,12 +29,9 @@ export default function TabLayout() {
           ),
         }}
         listeners={{
-          tabPress: () => {
-            EventRegister.emit("refreshGroups");
-          },
+          tabPress: () => EventRegister.emit("refreshGroups"),
         }}
       />
-
       <Tabs.Screen
         name="admin"
         options={{
@@ -56,6 +40,15 @@ export default function TabLayout() {
             <Ionicons name="settings" size={size} color={color} />
           ),
           href: isAdmin ? "/admin" : null,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>

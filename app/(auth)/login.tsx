@@ -48,18 +48,18 @@ export default function Login() {
       style={{
         flex: 1,
         justifyContent: "center",
-        padding: 20,
+        padding: 24,
         backgroundColor: "#f9fafb",
       }}
     >
       <View
         style={{
           backgroundColor: "white",
-          padding: 25,
-          borderRadius: 12,
+          padding: 28,
+          borderRadius: 14,
           shadowColor: "#000",
-          shadowOpacity: 0.1,
-          shadowRadius: 6,
+          shadowOpacity: 0.08,
+          shadowRadius: 8,
           elevation: 3,
         }}
       >
@@ -68,7 +68,7 @@ export default function Login() {
             fontSize: 28,
             fontWeight: "700",
             textAlign: "center",
-            marginBottom: 8,
+            marginBottom: 12,
             color: "#111",
           }}
         >
@@ -76,13 +76,13 @@ export default function Login() {
         </Text>
         <Text
           style={{
-            fontSize: 14,
-            color: "#666",
+            fontSize: 15,
+            color: "#555",
             textAlign: "center",
-            marginBottom: 20,
+            marginBottom: 28,
           }}
         >
-          Sign in to continue to New Hope Chat
+          Hi there 👋 Sign in to keep the conversation going.
         </Text>
 
         {/* Email */}
@@ -93,10 +93,12 @@ export default function Login() {
           style={{
             borderWidth: 1,
             borderColor: "#ddd",
-            padding: 12,
-            borderRadius: 8,
-            marginBottom: 12,
+            paddingVertical: 14,
+            paddingHorizontal: 12,
+            borderRadius: 10,
+            marginBottom: 16,
             fontSize: 16,
+            backgroundColor: "#fafafa",
           }}
           autoCapitalize="none"
           keyboardType="email-address"
@@ -111,10 +113,12 @@ export default function Login() {
           style={{
             borderWidth: 1,
             borderColor: "#ddd",
-            padding: 12,
-            borderRadius: 8,
-            marginBottom: 16,
+            paddingVertical: 14,
+            paddingHorizontal: 12,
+            borderRadius: 10,
+            marginBottom: 20,
             fontSize: 16,
+            backgroundColor: "#fafafa",
           }}
         />
 
@@ -124,15 +128,16 @@ export default function Login() {
           disabled={loading}
           style={{
             backgroundColor: loading ? "#9ca3af" : "#007AFF",
-            paddingVertical: 14,
-            borderRadius: 8,
+            paddingVertical: 16,
+            borderRadius: 10,
             alignItems: "center",
+            marginBottom: 18,
           }}
         >
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
+            <Text style={{ color: "white", fontSize: 17, fontWeight: "600" }}>
               Login
             </Text>
           )}
@@ -141,9 +146,8 @@ export default function Login() {
         {/* Forgot Password */}
         <TouchableOpacity
           onPress={() => router.push("/(auth)/forgot-password")}
-          style={{ marginTop: 15 }}
         >
-          <Text style={{ textAlign: "center", color: "#007AFF" }}>
+          <Text style={{ textAlign: "center", color: "#007AFF", fontSize: 15 }}>
             Forgot your password?
           </Text>
         </TouchableOpacity>
