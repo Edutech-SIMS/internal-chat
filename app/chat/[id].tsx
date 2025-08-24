@@ -1,24 +1,26 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   SafeAreaView,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  Animated,
-  Dimensions,
-  StatusBar,
-  ScrollView,
 } from "react-native";
+import EmojiSelector, { Categories } from "react-native-emoji-selector";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { canSendMessages } from "../../lib/message-permissions";
@@ -44,6 +46,9 @@ export default function ChatScreen() {
   const [checkingPermission, setCheckingPermission] = useState(true);
   const [isAnnouncementGroup, setIsAnnouncementGroup] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const { user } = useAuth();
   const params = useLocalSearchParams();
@@ -51,6 +56,8 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const textInputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
 
   const chatId = params.id as string;
@@ -80,9 +87,74 @@ export default function ChatScreen() {
 
   useEffect(() => {
     fetchMessages();
-    setupRealtime();
     checkMessagePermissions();
+    setupRealtimeSubscription();
   }, [chatId]);
+
+  const setupRealtimeSubscription = () => {
+    // Subscribe to typing events
+    const typingSubscription = supabase
+      .channel("typing-events")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "typing_indicators",
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            const newTypingUser = payload.new.user_id;
+            if (newTypingUser !== user?.id) {
+              setTypingUsers((prev) => new Set(prev).add(newTypingUser));
+            }
+          } else if (payload.eventType === "DELETE") {
+            const stoppedTypingUser = payload.old.user_id;
+            setTypingUsers((prev) => {
+              const newSet = new Set(prev);
+              newSet.delete(stoppedTypingUser);
+              return newSet;
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      typingSubscription.unsubscribe();
+    };
+  };
+
+  const handleTyping = async (isTyping: boolean) => {
+    if (!user) return;
+
+    // Clear previous timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    if (isTyping) {
+      // Send typing start event
+      await supabase.from("typing_indicators").upsert({
+        user_id: user.id,
+        group_id: chatId,
+        is_typing: true,
+        updated_at: new Date().toISOString(),
+      });
+
+      // Set timeout to automatically stop typing after 3 seconds
+      typingTimeoutRef.current = setTimeout(() => {
+        handleTyping(false);
+      }, 3000);
+    } else {
+      // Send typing stop event
+      await supabase
+        .from("typing_indicators")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("group_id", chatId);
+    }
+  };
 
   const checkMessagePermissions = async () => {
     if (!user) return;
@@ -154,30 +226,8 @@ export default function ChatScreen() {
     }
   };
 
-  const setupRealtime = () => {
-    const channel = supabase
-      .channel("messages")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `group_id=eq.${chatId}`,
-        },
-        () => {
-          fetchMessages();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  };
-
   const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || sending) return;
 
     if (!canSend) {
       Alert.alert(
@@ -187,27 +237,46 @@ export default function ChatScreen() {
       return;
     }
 
+    setSending(true);
+    // Stop typing when sending
+    handleTyping(false);
+
     const { error } = await supabase
       .from("messages")
       .insert([{ content: newMessage, user_id: user?.id, group_id: chatId }]);
 
     if (error) {
       Alert.alert("Error", error.message);
+      setSending(false);
     } else {
       setNewMessage("");
+      // Manually refresh messages after sending
+      fetchMessages();
+      setSending(false);
     }
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setNewMessage((prev) => prev + emoji);
+    textInputRef.current?.focus();
   };
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-    const isToday = date.toDateString() === now.toDateString();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
-    if (isToday) {
-      return date.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+    if (diffInSeconds < 60) {
+      return "Just now";
+    } else if (diffInSeconds < 3600) {
+      const minutes = Math.floor(diffInSeconds / 60);
+      return `${minutes}m ago`;
+    } else if (diffInSeconds < 86400) {
+      const hours = Math.floor(diffInSeconds / 3600);
+      return `${hours}h ago`;
+    } else if (diffInSeconds < 604800) {
+      const days = Math.floor(diffInSeconds / 86400);
+      return `${days}d ago`;
     } else {
       return date.toLocaleDateString([], { month: "short", day: "numeric" });
     }
@@ -225,56 +294,74 @@ export default function ChatScreen() {
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isMyMessage =
       item.profiles?.full_name === user?.user_metadata?.full_name;
-    const showAvatar =
-      !isMyMessage &&
-      (index === 0 ||
-        messages[index - 1].profiles?.full_name !== item.profiles?.full_name);
+
+    const alignRight = !isAnnouncementGroup && isMyMessage;
+
+    // Only show avatar on last bubble in a block
+    const nextMessage = messages[index + 1];
+    const isLastFromUser =
+      !nextMessage ||
+      nextMessage.profiles?.full_name !== item.profiles?.full_name;
 
     return (
-      <Animated.View
+      <View
         style={[
-          styles.messageWrapper,
-          isMyMessage ? styles.myMessageWrapper : styles.otherMessageWrapper,
+          styles.messageRow,
+          alignRight ? styles.rowRight : styles.rowLeft,
         ]}
       >
-        {!isMyMessage && showAvatar && (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {getInitials(item.profiles?.full_name || "U")}
-            </Text>
-          </View>
-        )}
-        {!isMyMessage && !showAvatar && <View style={styles.avatarSpacer} />}
-
         <View
           style={[
             styles.messageBubble,
-            isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble,
+            alignRight ? styles.myMessageBubble : styles.otherMessageBubble,
           ]}
         >
-          {!isMyMessage && showAvatar && (
+          {/* Sender name (only once, and not for my messages) */}
+          {!alignRight && (
             <Text style={styles.senderName}>
-              {item.profiles?.full_name || "Unknown User"}
+              {item.profiles?.full_name || "Unknown"}
             </Text>
           )}
+
           <Text
             style={[
               styles.messageText,
-              isMyMessage ? styles.myMessageText : styles.otherMessageText,
+              alignRight ? styles.myMessageText : styles.otherMessageText,
             ]}
           >
-            {item.content || ""}
+            {item.content}
           </Text>
+
           <Text
             style={[
               styles.timestamp,
-              isMyMessage ? styles.myTimestamp : styles.otherTimestamp,
+              alignRight ? styles.myTimestamp : styles.otherTimestamp,
             ]}
           >
             {formatTime(item.created_at)}
           </Text>
+
+          {/* Avatar overlay (only last bubble in block) */}
+          {isLastFromUser && (
+            <View
+              style={[
+                styles.avatarOverlay,
+                alignRight ? { right: -38 } : { left: -38 },
+              ]}
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {getInitials(
+                    alignRight
+                      ? user?.user_metadata?.full_name || "Me"
+                      : item.profiles?.full_name || "U"
+                  )}
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -298,7 +385,7 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
         {/* Enhanced Header */}
         <Animated.View
@@ -327,6 +414,13 @@ export default function ChatScreen() {
                 <Ionicons name="megaphone" size={12} color="#FF6B35" />
                 <Text style={styles.announcementText}>Announcement</Text>
               </View>
+            )}
+            {typingUsers.size > 0 && (
+              <Text style={styles.typingText}>
+                {Array.from(typingUsers).length === 1
+                  ? "1 person is typing..."
+                  : `${Array.from(typingUsers).length} people are typing...`}
+              </Text>
             )}
           </View>
 
@@ -393,37 +487,81 @@ export default function ChatScreen() {
             ]}
           >
             <View style={styles.inputWrapper}>
+              <TouchableOpacity
+                style={styles.emojiButton}
+                onPress={() => {
+                  if (showEmojiPicker) {
+                    setShowEmojiPicker(false);
+                    textInputRef.current?.focus();
+                  } else {
+                    Keyboard.dismiss();
+                    setShowEmojiPicker(true);
+                  }
+                }}
+              >
+                <Ionicons
+                  name={showEmojiPicker ? "keypad-outline" : "happy-outline"}
+                  size={24}
+                  color="#8E8E93"
+                />
+              </TouchableOpacity>
+
               <TextInput
+                ref={textInputRef}
                 value={newMessage}
                 onChangeText={(text) => {
                   setNewMessage(text);
-                  setIsTyping(text.length > 0);
+                  handleTyping(text.length > 0);
                 }}
                 placeholder="Type a message..."
                 placeholderTextColor="#8E8E93"
-                style={styles.textInput}
+                style={[
+                  styles.textInput,
+                  !newMessage && { textAlignVertical: "center" },
+                ]}
                 multiline
                 maxLength={500}
-                textAlignVertical="center"
               />
+
               <TouchableOpacity
                 onPress={sendMessage}
                 style={[
                   styles.sendButton,
-                  newMessage.trim()
+                  newMessage.trim() && !sending
                     ? styles.sendButtonActive
                     : styles.sendButtonInactive,
                 ]}
-                disabled={!newMessage.trim()}
+                disabled={!newMessage.trim() || sending}
                 activeOpacity={0.8}
               >
-                <Ionicons
-                  name="send"
-                  size={20}
-                  color={newMessage.trim() ? "#FFFFFF" : "#8E8E93"}
-                />
+                {sending ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons
+                    name="send"
+                    size={20}
+                    color={
+                      newMessage.trim() && !sending ? "#FFFFFF" : "#8E8E93"
+                    }
+                  />
+                )}
               </TouchableOpacity>
             </View>
+
+            {/* Emoji Picker */}
+            {showEmojiPicker && (
+              <View style={styles.emojiPickerContainer}>
+                <EmojiSelector
+                  onEmojiSelected={handleEmojiSelect}
+                  category={Categories.all}
+                  columns={8}
+                  showSearchBar={false}
+                  showHistory={true}
+                  showTabs={true}
+                  showSectionTitles={true}
+                />
+              </View>
+            )}
           </Animated.View>
         )}
 
@@ -631,6 +769,12 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginLeft: 4,
   },
+  typingText: {
+    fontSize: 12,
+    color: "#8E8E93",
+    fontStyle: "italic",
+    marginTop: 2,
+  },
   infoButton: {
     padding: 8,
     marginRight: -8,
@@ -686,23 +830,11 @@ const styles = StyleSheet.create({
   otherMessageWrapper: {
     justifyContent: "flex-start",
   },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 8,
-  },
+
   avatarSpacer: {
     width: 40,
   },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "600",
-  },
+
   messageBubble: {
     maxWidth: width * 0.75,
     paddingHorizontal: 16,
@@ -758,19 +890,27 @@ const styles = StyleSheet.create({
   },
   inputWrapper: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     backgroundColor: "#F2F2F7",
     borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+
+  emojiButton: {
+    padding: 8,
+    marginRight: 4,
   },
   textInput: {
     flex: 1,
     fontSize: 16,
     color: "#1C1C1E",
     maxHeight: 100,
-    paddingVertical: 8,
+    paddingVertical: 0,
+    paddingHorizontal: 8,
+    textAlignVertical: "center",
   },
+
   sendButton: {
     width: 32,
     height: 32,
@@ -784,6 +924,12 @@ const styles = StyleSheet.create({
   },
   sendButtonInactive: {
     backgroundColor: "transparent",
+  },
+  emojiPickerContainer: {
+    height: 250,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E5E7",
   },
   permissionNotice: {
     flexDirection: "row",
@@ -913,6 +1059,37 @@ const styles = StyleSheet.create({
   modalCloseButtonText: {
     color: "#FFFFFF",
     fontSize: 17,
+    fontWeight: "600",
+  },
+
+  messageRow: {
+    flexDirection: "row",
+    marginBottom: 12,
+    position: "relative",
+    paddingHorizontal: 48,
+  },
+  rowLeft: {
+    justifyContent: "flex-start",
+  },
+  rowRight: {
+    justifyContent: "flex-end",
+  },
+  avatarOverlay: {
+    position: "absolute",
+    bottom: 0,
+  },
+
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#007AFF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  avatarText: {
+    color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "600",
   },
 });
