@@ -76,8 +76,8 @@ export default function GroupsScreen() {
   const [newGroupIsAnnouncement, setNewGroupIsAnnouncement] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
 
-  // User assignment state
-  const [selectedUser, setSelectedUser] = useState("");
+  // User assignment state - updated for multiple users
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [selectedGroupForAssignment, setSelectedGroupForAssignment] =
     useState("");
   const [userSearchQuery, setUserSearchQuery] = useState("");
@@ -98,6 +98,7 @@ export default function GroupsScreen() {
         );
         setFilteredUsers(availableUsers);
         setUserSearchQuery("");
+        setSelectedUsers([]); // Reset selected users when opening modal
       }
     },
     [allUsers, groupMembers, modalState]
@@ -105,7 +106,7 @@ export default function GroupsScreen() {
 
   const closeModal = useCallback(() => {
     setModalState({ type: "none", group: null });
-    setSelectedUser("");
+    setSelectedUsers([]);
     setSelectedGroupForAssignment("");
     setUserSearchQuery("");
     setFilteredUsers(allUsers);
@@ -274,9 +275,10 @@ export default function GroupsScreen() {
     }
   };
 
-  const addUserToGroup = async () => {
-    if (!selectedUser) {
-      Alert.alert("Error", "Please select a user");
+  // Updated to handle multiple users
+  const addUsersToGroup = async () => {
+    if (selectedUsers.length === 0) {
+      Alert.alert("Error", "Please select at least one user");
       return;
     }
 
@@ -287,25 +289,82 @@ export default function GroupsScreen() {
     }
 
     try {
-      const { error } = await supabase.from("group_members").insert({
-        user_id: selectedUser,
+      // Prepare batch insert
+      const membersToAdd = selectedUsers.map((userId) => ({
+        user_id: userId,
         group_id: groupId,
-      });
-      if (error) throw new Error(`Failed to add user: ${error.message}`);
+      }));
 
-      Alert.alert("Success", "User added to group successfully!");
-      setSelectedUser("");
+      const { error } = await supabase
+        .from("group_members")
+        .insert(membersToAdd);
+
+      if (error) throw new Error(`Failed to add users: ${error.message}`);
+
+      Alert.alert(
+        "Success",
+        `${selectedUsers.length} user(s) added to group successfully!`
+      );
+      setSelectedUsers([]);
       setUserSearchQuery("");
       setFilteredUsers(allUsers);
       closeModal();
+
       if (modalState.group) {
         await fetchGroupMembers(modalState.group.id);
-        openModal("group", modalState.group);
       }
       debouncedFetchGroups();
     } catch (error: any) {
-      console.error("Add user error:", error);
-      Alert.alert("Error", error.message || "Failed to add user to group");
+      console.error("Add users error:", error);
+      Alert.alert("Error", error.message || "Failed to add users to group");
+    }
+  };
+
+  // Add all available users to the group
+  const addAllUsersToGroup = async () => {
+    const groupId = modalState.group?.id || selectedGroupForAssignment;
+    if (!groupId) {
+      Alert.alert("Error", "No group selected");
+      return;
+    }
+
+    if (filteredUsers.length === 0) {
+      Alert.alert("Info", "No users available to add");
+      return;
+    }
+
+    try {
+      // Get all user IDs from filteredUsers
+      const allUserIds = filteredUsers.map((user) => user.id);
+
+      // Prepare batch insert
+      const membersToAdd = allUserIds.map((userId) => ({
+        user_id: userId,
+        group_id: groupId,
+      }));
+
+      const { error } = await supabase
+        .from("group_members")
+        .insert(membersToAdd);
+
+      if (error) throw new Error(`Failed to add users: ${error.message}`);
+
+      Alert.alert(
+        "Success",
+        `${allUserIds.length} user(s) added to group successfully!`
+      );
+      setSelectedUsers([]);
+      setUserSearchQuery("");
+      setFilteredUsers([]);
+      closeModal();
+
+      if (modalState.group) {
+        await fetchGroupMembers(modalState.group.id);
+      }
+      debouncedFetchGroups();
+    } catch (error: any) {
+      console.error("Add all users error:", error);
+      Alert.alert("Error", error.message || "Failed to add users to group");
     }
   };
 
@@ -381,6 +440,28 @@ export default function GroupsScreen() {
         )
       );
     }
+  };
+
+  // Toggle user selection for multiple users
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUsers((prev) => {
+      if (prev.includes(userId)) {
+        return prev.filter((id) => id !== userId);
+      } else {
+        return [...prev, userId];
+      }
+    });
+  };
+
+  // Select all users in the current filtered list
+  const selectAllUsers = () => {
+    const allFilteredUserIds = filteredUsers.map((user) => user.id);
+    setSelectedUsers(allFilteredUserIds);
+  };
+
+  // Deselect all users
+  const deselectAllUsers = () => {
+    setSelectedUsers([]);
   };
 
   const viewGroupDetails = async (group: Group) => {
@@ -546,7 +627,7 @@ export default function GroupsScreen() {
                 onPress={() => openModal("addUser", modalState.group)}
               >
                 <Ionicons name="person-add" size={20} color="#007AFF" />
-                <Text style={styles.actionButtonText}>Add User</Text>
+                <Text style={styles.actionButtonText}>Add Users</Text>
               </TouchableOpacity>
 
               {modalState.group?.is_announcement && (
@@ -631,7 +712,13 @@ export default function GroupsScreen() {
                     styles.switch,
                     newGroupIsPublic && styles.switchActive,
                   ]}
-                  onPress={() => setNewGroupIsPublic(!newGroupIsPublic)}
+                  onPress={() => {
+                    setNewGroupIsPublic(!newGroupIsPublic);
+                    // If making public, ensure it's not announcement-only
+                    if (!newGroupIsPublic && newGroupIsAnnouncement) {
+                      setNewGroupIsAnnouncement(false);
+                    }
+                  }}
                 >
                   <View
                     style={[
@@ -649,9 +736,13 @@ export default function GroupsScreen() {
                     styles.switch,
                     newGroupIsAnnouncement && styles.switchActive,
                   ]}
-                  onPress={() =>
-                    setNewGroupIsAnnouncement(!newGroupIsAnnouncement)
-                  }
+                  onPress={() => {
+                    setNewGroupIsAnnouncement(!newGroupIsAnnouncement);
+                    // If making announcement-only, ensure it's not public
+                    if (!newGroupIsAnnouncement && newGroupIsPublic) {
+                      setNewGroupIsPublic(false);
+                    }
+                  }}
                 >
                   <View
                     style={[
@@ -676,7 +767,7 @@ export default function GroupsScreen() {
         </View>
       </Modal>
 
-      {/* Add User to Group Modal */}
+      {/* Add User to Group Modal - Updated for multiple users */}
       <Modal
         visible={modalState.type === "addUser"}
         animationType="slide"
@@ -686,7 +777,7 @@ export default function GroupsScreen() {
           <View style={styles.modalDialog}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                Add User to {modalState.group?.name || "Group"}
+                Add Users to {modalState.group?.name || "Group"}
               </Text>
               <TouchableOpacity onPress={closeModal}>
                 <Ionicons name="close" size={24} color="#333" />
@@ -710,14 +801,42 @@ export default function GroupsScreen() {
                 </View>
               ) : (
                 <>
-                  <TextInput
-                    placeholder="Search users by name or email"
-                    value={userSearchQuery}
-                    onChangeText={handleUserSearch}
-                    style={styles.searchInput}
-                    autoCapitalize="none"
-                    placeholderTextColor="#888"
-                  />
+                  <View style={styles.searchHeader}>
+                    <TextInput
+                      placeholder="Search users by name or email"
+                      value={userSearchQuery}
+                      onChangeText={handleUserSearch}
+                      style={styles.searchInput}
+                      autoCapitalize="none"
+                      placeholderTextColor="#888"
+                    />
+
+                    {filteredUsers.length > 0 && (
+                      <View style={styles.bulkActions}>
+                        <TouchableOpacity
+                          style={styles.bulkActionButton}
+                          onPress={selectAllUsers}
+                        >
+                          <Ionicons name="checkbox" size={16} color="#007AFF" />
+                          <Text style={styles.bulkActionText}>Select All</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.bulkActionButton}
+                          onPress={deselectAllUsers}
+                        >
+                          <Ionicons
+                            name="square-outline"
+                            size={16}
+                            color="#666"
+                          />
+                          <Text style={styles.bulkActionText}>
+                            Deselect All
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
 
                   <ScrollView
                     style={styles.scrollBox}
@@ -729,17 +848,33 @@ export default function GroupsScreen() {
                         key={user.id}
                         style={[
                           styles.option,
-                          selectedUser === user.id && styles.optionSelected,
+                          selectedUsers.includes(user.id) &&
+                            styles.optionSelected,
                         ]}
-                        onPress={() => setSelectedUser(user.id)}
+                        onPress={() => toggleUserSelection(user.id)}
                       >
                         <View style={styles.userOptionContent}>
+                          <View style={styles.checkbox}>
+                            {selectedUsers.includes(user.id) ? (
+                              <Ionicons
+                                name="checkbox"
+                                size={20}
+                                color="#007AFF"
+                              />
+                            ) : (
+                              <Ionicons
+                                name="square-outline"
+                                size={20}
+                                color="#ccc"
+                              />
+                            )}
+                          </View>
                           <View style={styles.avatar}>
                             <Text style={styles.avatarText}>
                               {user.full_name.charAt(0).toUpperCase()}
                             </Text>
                           </View>
-                          <View>
+                          <View style={styles.userInfo}>
                             <Text style={styles.optionText}>
                               {user.full_name}
                             </Text>
@@ -770,15 +905,38 @@ export default function GroupsScreen() {
                         Cancel
                       </Text>
                     </TouchableOpacity>
+
+                    {filteredUsers.length > 0 && (
+                      <TouchableOpacity
+                        style={[
+                          styles.button,
+                          styles.secondaryButton,
+                          styles.addAllButton,
+                        ]}
+                        onPress={addAllUsersToGroup}
+                      >
+                        <Text
+                          style={[
+                            styles.buttonText,
+                            styles.secondaryButtonText,
+                          ]}
+                        >
+                          Add All
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
                     <TouchableOpacity
                       style={[
                         styles.button,
-                        !selectedUser && styles.buttonDisabled,
+                        selectedUsers.length === 0 && styles.buttonDisabled,
                       ]}
-                      onPress={addUserToGroup}
-                      disabled={!selectedUser}
+                      onPress={addUsersToGroup}
+                      disabled={selectedUsers.length === 0}
                     >
-                      <Text style={styles.buttonText}>Add to Group</Text>
+                      <Text style={styles.buttonText}>
+                        Add Selected ({selectedUsers.length})
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </>
@@ -1171,6 +1329,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 16,
     color: "black",
+    flex: 1,
   },
   textArea: {
     height: 100,
@@ -1233,6 +1392,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  addAllButton: {
+    marginRight: 8,
+  },
   scrollBox: {
     maxHeight: 200,
     marginBottom: 16,
@@ -1249,6 +1411,12 @@ const styles = StyleSheet.create({
   userOptionContent: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  checkbox: {
+    marginRight: 12,
+  },
+  userInfo: {
+    flex: 1,
   },
   optionSelected: {
     backgroundColor: "#007bff22",
@@ -1304,7 +1472,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
   },
-
   publicBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1313,5 +1480,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     marginLeft: 8,
+  },
+  searchHeader: {
+    flexDirection: "column",
+    marginBottom: 16,
+  },
+  bulkActions: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    gap: 16,
+    marginTop: 8,
+  },
+  bulkActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+  },
+  bulkActionText: {
+    fontSize: 14,
+    marginLeft: 4,
+    color: "#666",
   },
 });
