@@ -35,7 +35,7 @@ export default function Login() {
         return;
       }
 
-      router.replace("/(tabs)");
+      router.replace("/school-splash");
     } catch (error: any) {
       Alert.alert("Error", error.message);
     } finally {

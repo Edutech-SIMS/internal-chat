@@ -9,6 +9,7 @@ export default function AuthLayout() {
         options={{ title: "Create Admin Account" }}
       />
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="school-splash" options={{ headerShown: false }} />
     </Stack>
   );
 }

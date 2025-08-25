@@ -16,19 +16,26 @@ export default function Splash() {
 
   const [checkingAdmin, setCheckingAdmin] = useState(true);
   const [adminExists, setAdminExists] = useState(false);
-
-  const [loadingSettings, setLoadingSettings] = useState(true);
-  const [schoolName, setSchoolName] = useState<string | null>(null);
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [themeColor, setThemeColor] = useState<string | null>(null);
-
   const [ready, setReady] = useState(false);
+
+  // Hardcoded splash screen values
+  const splashThemeColor = "#007AFF"; // Default blue, you can change this
+  const splashLogoUrl = null; // Or use a local asset: require('../assets/splash-icon.png')
+  const splashSchoolName = "School App"; // Default app name
 
   // Fade-in animation
   const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
-    fetchSettings();
+    // Start fade animation after a short delay
+    const fadeTimer = setTimeout(() => {
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+    }, 300);
 
     if (!user) {
       checkAdminExists();
@@ -38,34 +45,12 @@ export default function Splash() {
 
     // Always show splash for at least 2.5s
     const timer = setTimeout(() => setReady(true), 2500);
-    return () => clearTimeout(timer);
+
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(fadeTimer);
+    };
   }, [user]);
-
-  const fetchSettings = async () => {
-    try {
-      const { data } = await supabase
-        .from("school_settings")
-        .select("school_id, logo_url, name, theme_color")
-        .limit(1)
-        .single();
-
-      if (data) {
-        setSchoolName(data.name ?? null);
-        setLogoUrl(data.logo_url ?? null);
-        setThemeColor(data.theme_color ?? null);
-      }
-    } finally {
-      setLoadingSettings(false);
-
-      // Trigger fade-in after settings load
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    }
-  };
 
   const checkAdminExists = async () => {
     try {
@@ -81,31 +66,15 @@ export default function Splash() {
     }
   };
 
-  // 🚫 Don’t render splash until themeColor is loaded
-  if (!themeColor) {
+  // Show hardcoded splash screen
+  if (authLoading || checkingAdmin || !ready) {
     return (
       <View
         style={{
           flex: 1,
           justifyContent: "center",
           alignItems: "center",
-          backgroundColor: "black", // safe neutral loader bg (optional)
-        }}
-      >
-        <ActivityIndicator size="large" color="white" />
-      </View>
-    );
-  }
-
-  // Splash screen
-  if (authLoading || checkingAdmin || loadingSettings || !ready) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: themeColor, // ✅ only real theme color
+          backgroundColor: splashThemeColor,
           paddingHorizontal: 20,
         }}
       >
@@ -123,9 +92,9 @@ export default function Splash() {
             ],
           }}
         >
-          {logoUrl ? (
+          {splashLogoUrl ? (
             <Image
-              source={{ uri: logoUrl }}
+              source={{ uri: splashLogoUrl }}
               style={{
                 width: 140,
                 height: 140,
@@ -140,20 +109,35 @@ export default function Splash() {
               }}
               resizeMode="cover"
             />
-          ) : null}
-
-          {schoolName ? (
-            <Text
+          ) : (
+            // Fallback icon if no logo
+            <View
               style={{
-                fontSize: 28,
-                fontWeight: "bold",
-                color: "white",
-                textAlign: "center",
+                width: 140,
+                height: 140,
+                marginBottom: 20,
+                borderRadius: 30,
+                backgroundColor: "rgba(255,255,255,0.2)",
+                justifyContent: "center",
+                alignItems: "center",
+                borderWidth: 2,
+                borderColor: "rgba(255,255,255,0.3)",
               }}
             >
-              {schoolName}
-            </Text>
-          ) : null}
+              <Text style={{ fontSize: 60, color: "white" }}>🏫</Text>
+            </View>
+          )}
+
+          <Text
+            style={{
+              fontSize: 28,
+              fontWeight: "bold",
+              color: "white",
+              textAlign: "center",
+            }}
+          >
+            {splashSchoolName}
+          </Text>
         </Animated.View>
 
         <ActivityIndicator
