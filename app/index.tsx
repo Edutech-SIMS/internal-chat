@@ -9,25 +9,19 @@ import {
   View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
-import { supabase } from "../lib/supabase";
 
 export default function Splash() {
   const { user, loading: authLoading } = useAuth();
-
-  const [checkingAdmin, setCheckingAdmin] = useState(true);
-  const [adminExists, setAdminExists] = useState(false);
   const [ready, setReady] = useState(false);
 
-  // Hardcoded splash screen values
-  const splashThemeColor = "#007AFF"; // Default blue, you can change this
-  const splashLogoUrl = null; // Or use a local asset: require('../assets/splash-icon.png')
-  const splashSchoolName = "School App"; // Default app name
+  const splashThemeColor = "#007AFF";
+  const splashLogoUrl = null; // or require('../assets/splash-icon.png')
+  const splashSchoolName = "School App";
 
-  // Fade-in animation
   const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
-    // Start fade animation after a short delay
+    // Fade-in animation
     const fadeTimer = setTimeout(() => {
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -37,37 +31,17 @@ export default function Splash() {
       }).start();
     }, 300);
 
-    if (!user) {
-      checkAdminExists();
-    } else {
-      setCheckingAdmin(false);
-    }
-
-    // Always show splash for at least 2.5s
+    // Ensure splash shows for at least 2.5s
     const timer = setTimeout(() => setReady(true), 2500);
 
     return () => {
       clearTimeout(timer);
       clearTimeout(fadeTimer);
     };
-  }, [user]);
+  }, []);
 
-  const checkAdminExists = async () => {
-    try {
-      const { data } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("role", "admin")
-        .limit(1);
-
-      setAdminExists(Boolean(data && data.length > 0));
-    } finally {
-      setCheckingAdmin(false);
-    }
-  };
-
-  // Show hardcoded splash screen
-  if (authLoading || checkingAdmin || !ready) {
+  // While waiting for auth or splash timer
+  if (authLoading || !ready) {
     return (
       <View
         style={{
@@ -110,7 +84,6 @@ export default function Splash() {
               resizeMode="cover"
             />
           ) : (
-            // Fallback icon if no logo
             <View
               style={{
                 width: 140,
@@ -149,14 +122,6 @@ export default function Splash() {
     );
   }
 
-  // Auth redirect flow
-  if (user) {
-    return <Redirect href="/(tabs)" />;
-  }
-
-  if (!adminExists) {
-    return <Redirect href="/(auth)/admin-signup" />;
-  }
-
-  return <Redirect href="/(auth)/login" />;
+  // Redirect after splash
+  return user ? <Redirect href="/(tabs)" /> : <Redirect href="/(auth)/login" />;
 }

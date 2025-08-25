@@ -45,12 +45,11 @@ export default function ChatScreen() {
   const [canSend, setCanSend] = useState(false);
   const [checkingPermission, setCheckingPermission] = useState(true);
   const [isAnnouncementGroup, setIsAnnouncementGroup] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
   const [sending, setSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  const { user } = useAuth();
+  const { user, schoolId } = useAuth();
   const params = useLocalSearchParams();
   const router = useRouter();
   const flatListRef = useRef<FlatList>(null);
@@ -101,7 +100,9 @@ export default function ChatScreen() {
           event: "*",
           schema: "public",
           table: "typing_indicators",
+          filter: `school_id=eq.${schoolId}`, // <-- filter typing events by school
         },
+
         (payload) => {
           if (payload.eventType === "INSERT") {
             const newTypingUser = payload.new.user_id;
@@ -184,8 +185,8 @@ export default function ChatScreen() {
       .from("groups")
       .select("id, name, description, created_at, is_announcement")
       .eq("id", chatId)
+      .eq("school_id", schoolId) // <-- enforce school scoping
       .single();
-
     if (error) {
       console.error("Error fetching group info:", error);
     } else {
@@ -195,17 +196,19 @@ export default function ChatScreen() {
   };
 
   const fetchMessages = async () => {
+    if (!user) return;
     const { data, error } = await supabase
       .from("messages")
       .select(
         `
-        id,
-        content,
-        created_at,
-        profiles (full_name)
-      `
+      id,
+      content,
+      created_at,
+      profiles (full_name)
+    `
       )
       .eq("group_id", chatId)
+      .eq("school_id", schoolId) // <-- enforce school scoping
       .order("created_at", { ascending: true });
 
     if (error) {

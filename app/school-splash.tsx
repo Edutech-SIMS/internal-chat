@@ -1,5 +1,6 @@
 import { useAuth } from "contexts/AuthContext";
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
+
 import { supabase } from "lib/supabase";
 import { useEffect, useState } from "react";
 import {
@@ -11,10 +12,11 @@ import {
   View,
 } from "react-native";
 export default function SchoolSplash() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [schoolSettings, setSchoolSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
+  const router = useRouter();
 
   // Animation values
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -27,6 +29,16 @@ export default function SchoolSplash() {
       setLoading(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!loading && schoolSettings) {
+      const timer = setTimeout(() => {
+        router.replace("/(tabs)");
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [loading, schoolSettings]);
 
   const fetchSchoolSettings = async () => {
     try {
@@ -71,16 +83,17 @@ export default function SchoolSplash() {
       ]).start();
 
       // Auto-redirect after 3 seconds
-      setTimeout(() => setShowSplash(false), 3000);
+      // setTimeout(() => setShowSplash(false), 3000);
     }
   };
 
-  if (!user) {
-    return <Redirect href="/(auth)/login" />;
+  if (authLoading) {
+    // Auth state not ready yet, show nothing or a loader
+    return null;
   }
 
-  if (!showSplash) {
-    return <Redirect href="/(tabs)" />;
+  if (!user) {
+    return <Redirect href="/(auth)/login" />;
   }
 
   const themeColor = schoolSettings?.theme_color || "#007AFF";

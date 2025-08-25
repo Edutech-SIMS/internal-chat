@@ -49,7 +49,7 @@ export default function AdminDashboard() {
   );
   const [isPermissionsModalVisible, setPermissionsModalVisible] =
     useState(false);
-  const { isAdmin, loading: authLoading } = useAuth();
+  const { isAdmin, loading: authLoading, schoolId } = useAuth();
 
   // User creation state
   const [newUserEmail, setNewUserEmail] = useState("");
@@ -285,6 +285,13 @@ export default function AdminDashboard() {
 
       const authData = await response.json();
 
+      if (!schoolId) {
+        Alert.alert("Error", "Cannot create user: school context missing");
+        setLoading(false);
+        return;
+      }
+
+
       const profileResponse = await fetch(
         `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/profiles`,
         {
@@ -301,6 +308,7 @@ export default function AdminDashboard() {
             email: newUserEmail,
             full_name: newUserName,
             role: "user",
+            school_id: schoolId, // <--- assign school here
           }),
         }
       );

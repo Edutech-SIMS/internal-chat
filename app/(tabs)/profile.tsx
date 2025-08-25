@@ -37,14 +37,15 @@ export default function ProfileScreen() {
 
   // Update display name (profiles only)
   const updateDisplayName = async () => {
-    if (!user || !newDisplayName.trim()) return;
+    if (!user || !newDisplayName.trim() || !profile?.school_id) return;
 
     setUpdating(true);
     try {
       const { error } = await supabase
         .from("profiles")
         .update({ full_name: newDisplayName.trim() })
-        .eq("id", user.id);
+        .eq("id", user.id)
+        .eq("school_id", profile.school_id); // <- scoped to school
 
       if (error) throw error;
 
@@ -59,13 +60,24 @@ export default function ProfileScreen() {
   };
 
   const changePassword = async () => {
-    if (!user || !newPassword) return;
+    if (!user || !newPassword || !profile?.school_id) return;
 
     setChangingPassword(true);
 
     try {
-      const accessToken = session?.access_token;
+      // Optional: confirm the user is in the same school (scoping check)
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("school_id")
+        .eq("id", user.id)
+        .single();
 
+      if (profileError) throw profileError;
+      if (profileData.school_id !== profile.school_id) {
+        throw new Error("Unauthorized: school mismatch");
+      }
+
+      const accessToken = session?.access_token;
       if (!accessToken) throw new Error("No access token available");
 
       const res = await fetch(

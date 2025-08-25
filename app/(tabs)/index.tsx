@@ -28,7 +28,7 @@ export default function ChatsScreen() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   // Run once on mount
   useEffect(() => {
@@ -43,52 +43,55 @@ export default function ChatsScreen() {
   );
 
   const fetchChats = async () => {
+    if (!user?.id || !profile?.school_id) return;
+
+    setLoading(true);
+
     try {
-      const { data: userGroups, error } = await supabase
+      // 1️⃣ Get all groups for this user in their school (server-side filter)
+      const { data: userGroups, error: groupError } = await supabase
         .from("group_members")
         .select(
           `
-          group_id,
-          groups (
-            id,
-            name,
-            is_announcement,
-            created_at,
-            description
-          )
-        `
+        group_id,
+        groups!inner (
+          id,
+          name,
+          is_announcement,
+          created_at,
+          school_id,
+          description
         )
-        .eq("user_id", user?.id)
+      `
+        )
+        .eq("user_id", user.id)
+        .eq("groups.school_id", profile.school_id) // ✅ server-side school filter
         .order("joined_at", { ascending: false });
 
-      if (error) {
-        console.error("Error fetching user groups:", error);
-        return;
-      }
+      if (groupError) throw groupError;
 
       if (!userGroups || userGroups.length === 0) {
         setChats([]);
-        setLoading(false);
         return;
       }
 
       const groupIds = userGroups.map((g) => g.group_id);
 
-      const { data: latestMessages } = await supabase
+      // 2️⃣ Get latest message per group
+      const { data: latestMessages, error: messageError } = await supabase
         .from("messages")
         .select(`id, content, created_at, group_id`)
         .in("group_id", groupIds)
         .order("created_at", { ascending: false });
 
-      const messageMap = new Map();
-      if (latestMessages) {
-        latestMessages.forEach((msg) => {
-          if (!messageMap.has(msg.group_id)) {
-            messageMap.set(msg.group_id, msg);
-          }
-        });
-      }
+      if (messageError) throw messageError;
 
+      const messageMap = new Map<string, any>();
+      latestMessages?.forEach((msg) => {
+        if (!messageMap.has(msg.group_id)) messageMap.set(msg.group_id, msg);
+      });
+
+      // 3️⃣ Format chats
       const formattedChats: Chat[] = userGroups.map((userGroup: any) => {
         const group = userGroup.groups;
         const latestMessage = messageMap.get(group.id);
@@ -107,6 +110,7 @@ export default function ChatsScreen() {
       setChats(formattedChats);
     } catch (error) {
       console.error("Error fetching chats:", error);
+      setChats([]);
     } finally {
       setLoading(false);
     }

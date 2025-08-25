@@ -66,7 +66,7 @@ export default function GroupsScreen() {
     null
   );
 
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, schoolId } = useAuth();
   const router = useRouter();
 
   // Group creation state
@@ -124,6 +124,7 @@ export default function GroupsScreen() {
         const { data, error } = await supabase
           .from("groups")
           .select("*")
+          .eq("school_id", schoolId) // <-- filter by school
           .order("created_at", { ascending: false });
         if (error) throw new Error(`Failed to fetch groups: ${error.message}`);
         groupsData = data || [];
@@ -132,6 +133,7 @@ export default function GroupsScreen() {
           .from("group_members")
           .select("groups (*)")
           .eq("user_id", user?.id)
+          .eq("groups.school_id", schoolId) // <-- filter by school
           .order("created_at", { foreignTable: "groups", ascending: false });
         if (error)
           throw new Error(`Failed to fetch user groups: ${error.message}`);
@@ -180,10 +182,12 @@ export default function GroupsScreen() {
 
   const fetchAllUsers = async () => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("created_at", { ascending: false });
+     const { data, error } = await supabase
+       .from("profiles")
+       .select("*")
+       .eq("school_id", schoolId) // <-- only users from this school
+       .order("created_at", { ascending: false });
+
       if (error) throw new Error(`Failed to fetch users: ${error.message}`);
       setAllUsers(data || []);
       setFilteredUsers(data || []);
@@ -242,17 +246,19 @@ export default function GroupsScreen() {
       } = await supabase.auth.getUser();
       if (authError || !authUser) throw new Error("No authenticated user");
 
-      const { data: groupData, error: insertError } = await supabase
-        .from("groups")
-        .insert({
-          name: newGroupName,
-          description: newGroupDescription,
-          is_public: newGroupIsPublic,
-          is_announcement: newGroupIsAnnouncement,
-          created_by: authUser.id,
-        })
-        .select()
-        .single();
+     const { data: groupData, error: insertError } = await supabase
+       .from("groups")
+       .insert({
+         name: newGroupName,
+         description: newGroupDescription,
+         is_public: newGroupIsPublic,
+         is_announcement: newGroupIsAnnouncement,
+         created_by: authUser.id,
+         school_id: schoolId, // <-- attach school
+       })
+       .select()
+       .single();
+
       if (insertError) throw insertError;
 
       const { error: memberError } = await supabase

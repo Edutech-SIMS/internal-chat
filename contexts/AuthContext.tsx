@@ -1,5 +1,4 @@
 import { Session, User } from "@supabase/supabase-js";
-import { useRouter } from "expo-router";
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
@@ -8,6 +7,7 @@ interface Profile {
   full_name: string | null;
   role: string | null;
   avatar_url?: string | null;
+  school_id?: string | null; // add this
 }
 
 interface AuthContextType {
@@ -16,6 +16,7 @@ interface AuthContextType {
   loading: boolean;
   profile: Profile | null; // full profile data
   isAdmin: boolean;
+  schoolId: string | number | null;
   refreshProfile: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -26,6 +27,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   profile: null,
   isAdmin: false,
+  schoolId: null,
   refreshProfile: async () => {},
   signOut: async () => {},
 });
@@ -39,7 +41,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
 
   useEffect(() => {
     const initAuth = async () => {
@@ -63,9 +64,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
         if (session?.user) {
           await fetchProfile(session.user.id);
-          if (event === "SIGNED_IN") {
-            router.replace("/(tabs)");
-          }
         } else {
           setProfile(null);
         }
@@ -81,7 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select("id, full_name, role, school_id")
         .eq("id", userId)
         .single();
 
@@ -115,6 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         session,
         loading,
         profile,
+        schoolId: profile?.school_id ?? null,
         isAdmin: profile?.role === "admin",
         refreshProfile,
         signOut,

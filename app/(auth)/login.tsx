@@ -25,17 +25,40 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      if (error) {
-        Alert.alert("Login Failed", error.message);
+      if (authError) {
+        Alert.alert("Login Failed", authError.message);
         return;
       }
 
-      router.replace("/school-splash");
+      if (!authData?.user) {
+        Alert.alert("Error", "No user returned from Supabase.");
+        return;
+      }
+
+      // Fetch the user's profile to check roles
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, full_name, is_system_admin, school_id")
+        .eq("id", authData.user.id)
+        .single();
+
+      if (profileError) {
+        Alert.alert("Error", profileError.message);
+        return;
+      }
+
+      // Redirect based on role
+      if (profile.is_system_admin) {
+        router.replace("/system-admin"); // ← new system admin page
+      } else {
+        router.replace("/school-splash"); // regular user
+      }
     } catch (error: any) {
       Alert.alert("Error", error.message);
     } finally {
