@@ -3,11 +3,13 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { usePushToken } from "../../contexts/PushTokenContext";
 import { supabase } from "../../lib/supabase";
 
 export default function Login() {
@@ -15,6 +17,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const { token: expoPushToken } = usePushToken();
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -26,10 +29,7 @@ export default function Login() {
 
     try {
       const { data: authData, error: authError } =
-        await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        await supabase.auth.signInWithPassword({ email, password });
 
       if (authError) {
         Alert.alert("Login Failed", authError.message);
@@ -41,7 +41,7 @@ export default function Login() {
         return;
       }
 
-      // Fetch the user's profile to check roles
+      // Fetch profile
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("id, full_name, is_system_admin, school_id")
@@ -53,11 +53,29 @@ export default function Login() {
         return;
       }
 
+      // Push token registration if available
+      if (expoPushToken && profile.id && profile.school_id) {
+        try {
+          await supabase.from("user_push_tokens").upsert(
+            {
+              user_id: profile.id,
+              school_id: profile.school_id,
+              token: expoPushToken,
+              device_platform: Platform.OS,
+            },
+            { onConflict: "user_id,school_id,token" }
+          );
+          console.log("Push token registered");
+        } catch (err) {
+          console.error("Failed to save push token:", err);
+        }
+      }
+
       // Redirect based on role
       if (profile.is_system_admin) {
-        router.replace("/system-admin"); // ← new system admin page
+        router.replace("/system-admin");
       } else {
-        router.replace("/school-splash"); // regular user
+        router.replace("/school-splash");
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);

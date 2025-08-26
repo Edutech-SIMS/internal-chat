@@ -1,3 +1,4 @@
+import * as Notifications from "expo-notifications";
 import { Redirect } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -5,22 +6,76 @@ import {
   Animated,
   Easing,
   Image,
+  Platform,
   Text,
   View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
+import { usePushToken } from "../contexts/PushTokenContext";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+async function registerForPushNotificationsAsync(): Promise<
+  string | undefined
+> {
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.log("Push notifications permission denied");
+    return;
+  }
+
+  const tokenData = await Notifications.getExpoPushTokenAsync();
+  console.log("Expo push token:", tokenData.data);
+  return tokenData.data;
+}
 
 export default function Splash() {
   const { user, loading: authLoading } = useAuth();
+  const { setToken } = usePushToken();
   const [ready, setReady] = useState(false);
-
-  const splashThemeColor = "#7489FF";
-  let splashLogoUrl = require("../assets/images/edutechsystems-logo.png");
-
   const [fadeAnim] = useState(new Animated.Value(0));
 
+  const splashThemeColor = "#7489FF";
+  const splashLogoUrl = require("../assets/images/edutechsystems-logo.png");
+
+  // Request permission and store token in PushContext
   useEffect(() => {
-    // Fade-in animation
+    const initPush = async () => {
+      const token = await registerForPushNotificationsAsync();
+      if (token) setToken(token);
+    };
+    initPush();
+  }, [setToken]);
+
+  // Android notification channel
+  useEffect(() => {
+    if (Platform.OS === "android") {
+      Notifications.setNotificationChannelAsync("default", {
+        name: "default",
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#FF231F7C",
+      });
+    }
+  }, []);
+
+  // Splash fade-in animation
+  useEffect(() => {
     const fadeTimer = setTimeout(() => {
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -30,7 +85,6 @@ export default function Splash() {
       }).start();
     }, 300);
 
-    // Ensure splash shows for at least 2.5s
     const timer = setTimeout(() => setReady(true), 2500);
 
     return () => {
@@ -39,7 +93,6 @@ export default function Splash() {
     };
   }, []);
 
-  // While waiting for auth or splash timer
   if (authLoading || !ready) {
     return (
       <View
@@ -67,12 +120,8 @@ export default function Splash() {
         >
           {splashLogoUrl ? (
             <Image
-              source={require("../assets/images/edutechsystems-logo.png")}
-              style={{
-                width: 250,
-                height: 150,
-                marginBottom: 10,
-              }}
+              source={splashLogoUrl}
+              style={{ width: 250, height: 150, marginBottom: 10 }}
               resizeMode="contain"
             />
           ) : (

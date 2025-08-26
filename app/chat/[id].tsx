@@ -240,28 +240,50 @@ export default function ChatScreen() {
     }
 
     setSending(true);
-    // Stop typing when sending
     handleTyping(false);
 
-    // Ensure you have schoolId available from props, context, or the group object
+    // Insert the message
     const { error } = await supabase.from("messages").insert([
       {
         content: newMessage,
         user_id: user?.id,
         group_id: chatId,
-        school_id: schoolId, // ✅ make sure you pass this in
+        school_id: schoolId,
       },
     ]);
 
     if (error) {
       Alert.alert("Error", error.message);
       setSending(false);
-    } else {
-      setNewMessage("");
-      // Manually refresh messages after sending
-      fetchMessages();
-      setSending(false);
+      return;
     }
+
+    try {
+      // Trigger push notifications via Edge Function
+      const { data, error: pushError } = await supabase.functions.invoke(
+        "send-push-message",
+        {
+          body: {
+            message: newMessage,
+            group_id: chatId,
+            school_id: schoolId,
+            sender_id: user!.id,
+          },
+        }
+      );
+
+      if (pushError) {
+        console.error("Push notification error:", pushError);
+      } else {
+        console.log("Push notification sent:", data);
+      }
+    } catch (err) {
+      console.error("Push notification failed:", err);
+    }
+
+    setNewMessage("");
+    fetchMessages();
+    setSending(false);
   };
 
   const handleEmojiSelect = (emoji: string) => {
