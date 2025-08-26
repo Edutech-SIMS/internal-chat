@@ -60,7 +60,7 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
 
   const chatId = params.id as string;
-  const chatName = params.name as string;
+  const chatName = params.name || params.email as string;
 
   useEffect(() => {
     // Entrance animation
@@ -244,9 +244,15 @@ export default function ChatScreen() {
     // Stop typing when sending
     handleTyping(false);
 
-    const { error } = await supabase
-      .from("messages")
-      .insert([{ content: newMessage, user_id: user?.id, group_id: chatId }]);
+    // Ensure you have schoolId available from props, context, or the group object
+    const { error } = await supabase.from("messages").insert([
+      {
+        content: newMessage,
+        user_id: user?.id,
+        group_id: chatId,
+        school_id: schoolId, // ✅ make sure you pass this in
+      },
+    ]);
 
     if (error) {
       Alert.alert("Error", error.message);
@@ -258,6 +264,7 @@ export default function ChatScreen() {
       setSending(false);
     }
   };
+
 
   const handleEmojiSelect = (emoji: string) => {
     setNewMessage((prev) => prev + emoji);

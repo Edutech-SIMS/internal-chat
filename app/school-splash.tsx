@@ -15,7 +15,6 @@ export default function SchoolSplash() {
   const { user, loading: authLoading } = useAuth();
   const [schoolSettings, setSchoolSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [showSplash, setShowSplash] = useState(true);
   const router = useRouter();
 
   // Animation values
@@ -56,6 +55,8 @@ export default function SchoolSplash() {
           .select("name, logo_url, theme_color")
           .eq("school_id", profile.school_id)
           .single();
+
+        console.log("Fetched school settings:", data);
 
         if (data) {
           setSchoolSettings(data);

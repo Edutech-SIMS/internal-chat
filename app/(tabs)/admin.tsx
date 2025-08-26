@@ -38,17 +38,8 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedGroupForPermissions, setSelectedGroupForPermissions] =
-    useState<Group | null>(null);
-  const [groupMembers, setGroupMembers] = useState<User[]>([]);
-  const [messagePermissions, setMessagePermissions] = useState<{
-    [key: string]: boolean;
-  }>({});
-  const [permissionLoading, setPermissionLoading] = useState<string | null>(
-    null
-  );
-  const [isPermissionsModalVisible, setPermissionsModalVisible] =
-    useState(false);
+
+  useState(false);
   const { isAdmin, loading: authLoading, schoolId } = useAuth();
 
   // User creation state
@@ -56,17 +47,8 @@ export default function AdminDashboard() {
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserName, setNewUserName] = useState("");
 
-  // Group creation state
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupDescription, setNewGroupDescription] = useState("");
-  const [newGroupIsPublic, setNewGroupIsPublic] = useState(true);
-  const [newGroupIsAnnouncement, setNewGroupIsAnnouncement] = useState(false);
-
   // Modal states
   const [isUsersModalVisible, setUsersModalVisible] = useState(false);
-  const [isAssignModalVisible, setAssignModalVisible] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(users[0]?.id ?? "");
-  const [selectedGroup, setSelectedGroup] = useState(groups[0]?.id ?? "");
 
   // Error state
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +71,7 @@ export default function AdminDashboard() {
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
+      .eq("school_id", schoolId) // <-- only users from this school
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -99,125 +82,12 @@ export default function AdminDashboard() {
     }
   };
 
-  // Add these functions near your other functions
-  const fetchGroupMembers = async (groupId: string) => {
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members?select=profiles(id,email,full_name,role)&group_id=eq.${groupId}`,
-        {
-          headers: {
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-          },
-        }
-      );
-
-      if (!response.ok)
-        throw new Error(`HTTP error! status: ${response.status}`);
-
-      const data = await response.json();
-      const members = data
-        .map((item: any) => item.profiles)
-        .filter(Boolean) as User[];
-      setGroupMembers(members);
-
-      // Also fetch current permissions
-      await fetchMessagePermissions(groupId);
-    } catch (error) {
-      console.error("Error fetching group members:", error);
-      Alert.alert("Error", "Failed to load group members");
-    }
-  };
-
-  const fetchMessagePermissions = async (groupId: string) => {
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_message_permissions?select=user_id,can_send_messages&group_id=eq.${groupId}`,
-        {
-          headers: {
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-          },
-        }
-      );
-
-      if (!response.ok)
-        throw new Error(`HTTP error! status: ${response.status}`);
-
-      const data = await response.json();
-      const permissionsMap: { [key: string]: boolean } = {};
-      data.forEach((perm: any) => {
-        permissionsMap[perm.user_id] = perm.can_send_messages;
-      });
-      setMessagePermissions(permissionsMap);
-    } catch (error) {
-      console.error("Error fetching message permissions:", error);
-    }
-  };
-
-  const updateMessagePermission = async (
-    groupId: string,
-    userId: string,
-    canSend: boolean
-  ) => {
-    setPermissionLoading(`${groupId}-${userId}`);
-
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_message_permissions`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "resolution=merge-duplicates",
-          },
-          body: JSON.stringify({
-            group_id: groupId,
-            user_id: userId,
-            can_send_messages: canSend,
-            granted_by: (await supabase.auth.getUser()).data.user?.id,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to update permission: ${response.status} - ${errorText}`
-        );
-      }
-
-      // Update local state
-      setMessagePermissions((prev) => ({
-        ...prev,
-        [userId]: canSend,
-      }));
-
-      Alert.alert("Success", "Message permission updated successfully!");
-    } catch (error: any) {
-      console.error("Error updating permission:", error);
-      Alert.alert("Error", error.message || "Failed to update permission");
-    } finally {
-      setPermissionLoading(null);
-    }
-  };
-
-  const openPermissionsModal = async (group: Group) => {
-    setSelectedGroupForPermissions(group);
-    setPermissionsModalVisible(true);
-    await fetchGroupMembers(group.id);
-  };
-
   const fetchGroups = async () => {
     try {
       const { data: groupsData, error: groupsError } = await supabase
         .from("groups")
-        .select("id, name, description, is_public, is_announcement, created_at")
+        .select("*")
+        .eq("school_id", schoolId)
         .order("created_at", { ascending: false });
 
       if (groupsError) throw groupsError;
@@ -246,225 +116,49 @@ export default function AdminDashboard() {
     }
   };
 
-  const createUser = async () => {
-    if (!newUserEmail || !newUserPassword || !newUserName) {
-      Alert.alert("Error", "Please fill all fields");
-      return;
+const createUser = async () => {
+  if (!newUserEmail || !newUserPassword || !newUserName) {
+    Alert.alert("Error", "Please fill all fields");
+    return;
+  }
+
+  if (!schoolId) {
+    Alert.alert("Error", "Cannot create user: school context missing");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const { data, error } = await supabase.functions.invoke("admin-create-user", {
+      body: {
+        email: newUserEmail,
+        password: newUserPassword,
+        full_name: newUserName,
+        school_id: schoolId,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message || "Failed to create user");
     }
 
-    setLoading(true);
-
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/auth/v1/admin/users`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-          },
-          body: JSON.stringify({
-            email: newUserEmail,
-            password: newUserPassword,
-            email_confirm: true,
-            user_metadata: {
-              full_name: newUserName,
-            },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Auth creation failed: ${response.status} - ${errorText}`
-        );
-      }
-
-      const authData = await response.json();
-
-      if (!schoolId) {
-        Alert.alert("Error", "Cannot create user: school context missing");
-        setLoading(false);
-        return;
-      }
-
-
-      const profileResponse = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/profiles`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({
-            id: authData.id,
-            email: newUserEmail,
-            full_name: newUserName,
-            role: "user",
-            school_id: schoolId, // <--- assign school here
-          }),
-        }
-      );
-
-      if (!profileResponse.ok) {
-        const errorText = await profileResponse.text();
-        throw new Error(
-          `Profile creation failed: ${profileResponse.status} - ${errorText}`
-        );
-      }
-
-      Alert.alert("Success", "User created successfully!");
-      setNewUserEmail("");
-      setNewUserPassword("");
-      setNewUserName("");
-      fetchUsers();
-    } catch (error: any) {
-      console.error("Creation error:", error);
-      Alert.alert("Error", error.message || "Failed to create user");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createGroup = async () => {
-    if (!newGroupName.trim()) {
-      Alert.alert("Error", "Group name is required");
-      return;
+    if (data.error) {
+      throw new Error(data.error);
     }
 
-    setLoading(true);
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("No authenticated user");
-
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/groups`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "return=representation",
-          },
-          body: JSON.stringify({
-            name: newGroupName,
-            description: newGroupDescription,
-            is_public: newGroupIsPublic,
-            is_announcement: newGroupIsAnnouncement,
-            created_by: user.id,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to create group: ${response.status} - ${errorText}`
-        );
-      }
-
-      const groupData = await response.json();
-      const newGroup = groupData[0];
-
-      const memberResponse = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({
-            user_id: user.id,
-            group_id: newGroup.id,
-          }),
-        }
-      );
-
-      if (!memberResponse.ok) {
-        console.warn(
-          "Failed to auto-add admin to group, but group was created"
-        );
-      }
-
-      Alert.alert(
-        "Success",
-        "Group created successfully! You have been automatically added to the group."
-      );
-      setNewGroupName("");
-      setNewGroupDescription("");
-      setNewGroupIsPublic(true);
-      setNewGroupIsAnnouncement(false);
-      fetchGroups();
-    } catch (error: any) {
-      console.error("Group creation error:", error);
-      Alert.alert("Error", error.message || "Failed to create group");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const addUserToGroup = async () => {
-    if (!selectedUser || !selectedGroup) {
-      Alert.alert("Error", "Please select both a user and a group");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/rest/v1/group_members`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${process.env
-              .EXPO_PUBLIC_SUPABASE_SERVICE_KEY!}`,
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({
-            user_id: selectedUser,
-            group_id: selectedGroup,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to add user to group: ${response.status} - ${errorText}`
-        );
-      }
-
-      Alert.alert("Success", "User added to group successfully!");
-      setSelectedUser("");
-      setSelectedGroup("");
-      setAssignModalVisible(false);
-      fetchGroups();
-    } catch (error: any) {
-      console.error("Add to group error:", error);
-      Alert.alert("Error", error.message || "Failed to add user to group");
-    } finally {
-      setLoading(false);
-    }
-  };
+    Alert.alert("Success", "User created successfully!");
+    setNewUserEmail("");
+    setNewUserPassword("");
+    setNewUserName("");
+    fetchUsers();
+  } catch (error: any) {
+    console.error("Creation error:", error);
+    Alert.alert("Error", error.message || "Failed to create user");
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (error) {
     return (
@@ -628,282 +322,6 @@ export default function AdminDashboard() {
                     </View>
                   </View>
                 ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Assign User to Group Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isAssignModalVisible}
-        onRequestClose={() => setAssignModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Assign User to Group</Text>
-              <TouchableOpacity
-                onPress={() => setAssignModalVisible(false)}
-                accessibilityLabel="Close assign user modal"
-              >
-                <Ionicons name="close" size={24} color="#1a1c1e" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.modalContent}>
-              {users.length === 0 || groups.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>
-                    {users.length === 0 && groups.length === 0
-                      ? "No users or groups available"
-                      : users.length === 0
-                      ? "No users available"
-                      : "No groups available"}
-                  </Text>
-                  <TouchableOpacity
-                    style={[styles.button, styles.secondaryButton]}
-                    onPress={() => setAssignModalVisible(false)}
-                    accessibilityLabel="Close modal"
-                  >
-                    <Text
-                      style={[styles.buttonText, styles.secondaryButtonText]}
-                    >
-                      Close
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <>
-                  {/* USERS */}
-                  <Text style={styles.selectLabel}>Select User</Text>
-                  <ScrollView
-                    style={styles.scrollBox}
-                    nestedScrollEnabled
-                    showsVerticalScrollIndicator={false}
-                  >
-                    {users.map((user) => (
-                      <TouchableOpacity
-                        key={user.id}
-                        style={[
-                          styles.option,
-                          selectedUser === user.id && styles.optionSelected,
-                        ]}
-                        onPress={() => setSelectedUser(user.id)}
-                      >
-                        <Text style={styles.optionText}>
-                          {user.full_name} ({user.email})
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
-                  {/* GROUPS */}
-                  <Text style={styles.selectLabel}>Select Group</Text>
-                  <ScrollView
-                    style={styles.scrollBox}
-                    nestedScrollEnabled
-                    showsVerticalScrollIndicator={false}
-                  >
-                    {groups.map((group) => (
-                      <TouchableOpacity
-                        key={group.id}
-                        style={[
-                          styles.option,
-                          selectedGroup === group.id && styles.optionSelected,
-                        ]}
-                        onPress={() => setSelectedGroup(group.id)}
-                      >
-                        <Text style={styles.optionText}>
-                          {group.name} ({group.member_count} members)
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
-                  {/* ACTION BUTTONS */}
-                  <View style={styles.modalButtonContainer}>
-                    <TouchableOpacity
-                      style={[
-                        styles.button,
-                        styles.secondaryButton,
-                        styles.cancelButton,
-                      ]}
-                      onPress={() => {
-                        setSelectedUser("");
-                        setSelectedGroup("");
-                        setAssignModalVisible(false);
-                      }}
-                      accessibilityLabel="Cancel assignment"
-                    >
-                      <Text
-                        style={[styles.buttonText, styles.secondaryButtonText]}
-                      >
-                        Cancel
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.button,
-                        (!selectedUser || !selectedGroup || loading) &&
-                          styles.buttonDisabled,
-                      ]}
-                      onPress={addUserToGroup}
-                      disabled={!selectedUser || !selectedGroup || loading}
-                      accessibilityLabel="Assign user to group button"
-                    >
-                      {loading ? (
-                        <View style={styles.buttonLoadingContainer}>
-                          <ActivityIndicator size="small" color="#fff" />
-                          <Text
-                            style={[
-                              styles.buttonText,
-                              styles.buttonLoadingText,
-                            ]}
-                          >
-                            Assigning...
-                          </Text>
-                        </View>
-                      ) : (
-                        <Text style={styles.buttonText}>Assign to Group</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Permissions Management Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isPermissionsModalVisible}
-        onRequestClose={() => setPermissionsModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, styles.permissionsModal]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {selectedGroupForPermissions?.name} - Message Permissions
-              </Text>
-              <TouchableOpacity
-                onPress={() => setPermissionsModalVisible(false)}
-                accessibilityLabel="Close permissions modal"
-              >
-                <Ionicons name="close" size={24} color="#1a1c1e" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.selectLabel}>Select Group</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.groupSelector}
-              >
-                {groups.map((group) => (
-                  <TouchableOpacity
-                    key={group.id}
-                    style={[
-                      styles.groupOption,
-                      selectedGroupForPermissions?.id === group.id &&
-                        styles.groupOptionSelected,
-                    ]}
-                    onPress={() => openPermissionsModal(group)}
-                  >
-                    <Text
-                      style={[
-                        styles.groupOptionText,
-                        selectedGroupForPermissions?.id === group.id &&
-                          styles.groupOptionTextSelected,
-                      ]}
-                    >
-                      {group.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-
-            <ScrollView style={styles.modalContent}>
-              {selectedGroupForPermissions?.is_announcement ? (
-                <>
-                  <Text style={styles.permissionHelpText}>
-                    For announcement groups, only users with permission can send
-                    messages. Admins always have permission.
-                  </Text>
-
-                  {groupMembers.length === 0 ? (
-                    <Text style={styles.emptyText}>
-                      No members in this group
-                    </Text>
-                  ) : (
-                    groupMembers.map((member) => (
-                      <View key={member.id} style={styles.permissionItem}>
-                        <View style={styles.memberInfo}>
-                          <View style={styles.avatar}>
-                            <Text style={styles.avatarText}>
-                              {member.full_name.charAt(0).toUpperCase()}
-                            </Text>
-                          </View>
-                          <View>
-                            <Text style={styles.memberName}>
-                              {member.full_name}
-                            </Text>
-                            <Text style={styles.memberEmail}>
-                              {member.email}
-                            </Text>
-                            <Text style={styles.memberRole}>{member.role}</Text>
-                          </View>
-                        </View>
-
-                        <TouchableOpacity
-                          style={[
-                            styles.permissionToggle,
-                            (messagePermissions[member.id] ||
-                              member.role === "admin") &&
-                              styles.permissionEnabled,
-                          ]}
-                          onPress={() => {
-                            if (member.role !== "admin") {
-                              updateMessagePermission(
-                                selectedGroupForPermissions.id,
-                                member.id,
-                                !messagePermissions[member.id]
-                              );
-                            }
-                          }}
-                          disabled={
-                            member.role === "admin" ||
-                            permissionLoading ===
-                              `${selectedGroupForPermissions.id}-${member.id}`
-                          }
-                        >
-                          {permissionLoading ===
-                          `${selectedGroupForPermissions.id}-${member.id}` ? (
-                            <ActivityIndicator size="small" color="white" />
-                          ) : (
-                            <Text style={styles.permissionToggleText}>
-                              {member.role === "admin"
-                                ? "Admin"
-                                : messagePermissions[member.id]
-                                ? "Allowed"
-                                : "Denied"}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    ))
-                  )}
-                </>
-              ) : (
-                <Text style={styles.permissionHelpText}>
-                  This is a public group. All members can send messages freely.
-                </Text>
               )}
             </ScrollView>
           </View>

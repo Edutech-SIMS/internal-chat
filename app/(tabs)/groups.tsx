@@ -124,21 +124,29 @@ export default function GroupsScreen() {
         const { data, error } = await supabase
           .from("groups")
           .select("*")
-          .eq("school_id", schoolId) // <-- filter by school
+          .eq("school_id", schoolId)
           .order("created_at", { ascending: false });
+
+        console.log("groups query result:", { data, error });
+
         if (error) throw new Error(`Failed to fetch groups: ${error.message}`);
         groupsData = data || [];
       } else {
         const { data, error } = await supabase
           .from("group_members")
-          .select("groups (*)")
+          .select("groups!inner(*)") // ✅ flat groups
           .eq("user_id", user?.id)
-          .eq("groups.school_id", schoolId) // <-- filter by school
+          .eq("groups.school_id", schoolId)
           .order("created_at", { foreignTable: "groups", ascending: false });
+        console.log("groups query result:", { data, error });
         if (error)
           throw new Error(`Failed to fetch user groups: ${error.message}`);
         groupsData = data?.map((item) => item.groups).filter(Boolean) || [];
       }
+
+      const cleanGroups = groupsData || [];
+
+      setGroups(cleanGroups);
 
       const { data: userMemberships, error: membershipsError } = await supabase
         .from("group_members")
@@ -151,7 +159,7 @@ export default function GroupsScreen() {
       );
 
       const groupsWithDetails = await Promise.all(
-        groupsData.map(async (group) => {
+        cleanGroups.map(async (group) => {
           const { count, error } = await supabase
             .from("group_members")
             .select("*", { count: "exact", head: true })
@@ -182,11 +190,11 @@ export default function GroupsScreen() {
 
   const fetchAllUsers = async () => {
     try {
-     const { data, error } = await supabase
-       .from("profiles")
-       .select("*")
-       .eq("school_id", schoolId) // <-- only users from this school
-       .order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("school_id", schoolId) // <-- only users from this school
+        .order("created_at", { ascending: false });
 
       if (error) throw new Error(`Failed to fetch users: ${error.message}`);
       setAllUsers(data || []);
@@ -246,18 +254,18 @@ export default function GroupsScreen() {
       } = await supabase.auth.getUser();
       if (authError || !authUser) throw new Error("No authenticated user");
 
-     const { data: groupData, error: insertError } = await supabase
-       .from("groups")
-       .insert({
-         name: newGroupName,
-         description: newGroupDescription,
-         is_public: newGroupIsPublic,
-         is_announcement: newGroupIsAnnouncement,
-         created_by: authUser.id,
-         school_id: schoolId, // <-- attach school
-       })
-       .select()
-       .single();
+      const { data: groupData, error: insertError } = await supabase
+        .from("groups")
+        .insert({
+          name: newGroupName,
+          description: newGroupDescription,
+          is_public: newGroupIsPublic,
+          is_announcement: newGroupIsAnnouncement,
+          created_by: authUser.id,
+          school_id: schoolId, // <-- attach school
+        })
+        .select()
+        .single();
 
       if (insertError) throw insertError;
 
@@ -441,8 +449,9 @@ export default function GroupsScreen() {
       setFilteredUsers(
         availableUsers.filter(
           (user) =>
-            user.full_name.toLowerCase().includes(lowerQuery) ||
-            user.email.toLowerCase().includes(lowerQuery)
+            (user.full_name &&
+              user.full_name.toLowerCase().includes(lowerQuery)) ||
+            (user.email && user.email.toLowerCase().includes(lowerQuery))
         )
       );
     }
@@ -538,8 +547,19 @@ export default function GroupsScreen() {
             <Text style={styles.emptySubtext}>
               {isAdmin
                 ? "Create your first group to get started"
-                : "No groups available"}
+                : "No groups available. Contact an administrator to create groups."}
             </Text>
+            {isAdmin && (
+              <TouchableOpacity
+                style={styles.createEmptyButton}
+                onPress={() => openModal("create")}
+              >
+                <Ionicons name="add" size={20} color="white" />
+                <Text style={styles.createButtonText}>
+                  Create Your First Group
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <FlatList
@@ -605,7 +625,9 @@ export default function GroupsScreen() {
             <TouchableOpacity onPress={closeModal}>
               <Ionicons name="arrow-back" size={24} color="#333" />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>{modalState.group?.name}</Text>
+            <Text style={styles.modalTitle}>
+              {modalState.group?.name || "Group Details"}
+            </Text>
             <View style={{ width: 24 }} />
           </View>
 
@@ -657,13 +679,21 @@ export default function GroupsScreen() {
                   <View style={styles.memberInfo}>
                     <View style={styles.avatar}>
                       <Text style={styles.avatarText}>
-                        {member.full_name.charAt(0).toUpperCase()}
+                        {member.full_name
+                          ? member.full_name.charAt(0).toUpperCase()
+                          : "?"}
                       </Text>
                     </View>
                     <View>
-                      <Text style={styles.memberName}>{member.full_name}</Text>
-                      <Text style={styles.memberEmail}>{member.email}</Text>
-                      <Text style={styles.memberRole}>{member.role}</Text>
+                      <Text style={styles.memberName}>
+                        {member.full_name || "Unknown User"}
+                      </Text>
+                      <Text style={styles.memberEmail}>
+                        {member.email || "No email"}
+                      </Text>
+                      <Text style={styles.memberRole}>
+                        {member.role || "user"}
+                      </Text>
                     </View>
                   </View>
                   <TouchableOpacity
@@ -877,15 +907,17 @@ export default function GroupsScreen() {
                           </View>
                           <View style={styles.avatar}>
                             <Text style={styles.avatarText}>
-                              {user.full_name.charAt(0).toUpperCase()}
+                              {user.full_name
+                                ? user.full_name.charAt(0).toUpperCase()
+                                : "?"}
                             </Text>
                           </View>
                           <View style={styles.userInfo}>
                             <Text style={styles.optionText}>
-                              {user.full_name}
+                              {user.full_name || "Unknown User"}
                             </Text>
                             <Text style={styles.optionSubtext}>
-                              {user.email}
+                              {user.email || "No email"}
                             </Text>
                           </View>
                         </View>
@@ -978,13 +1010,21 @@ export default function GroupsScreen() {
                   <View style={styles.memberInfo}>
                     <View style={styles.avatar}>
                       <Text style={styles.avatarText}>
-                        {member.full_name.charAt(0).toUpperCase()}
+                        {member.full_name
+                          ? member.full_name.charAt(0).toUpperCase()
+                          : "?"}
                       </Text>
                     </View>
                     <View>
-                      <Text style={styles.memberName}>{member.full_name}</Text>
-                      <Text style={styles.memberEmail}>{member.email}</Text>
-                      <Text style={styles.memberRole}>{member.role}</Text>
+                      <Text style={styles.memberName}>
+                        {member.full_name || "Unknown User"}
+                      </Text>
+                      <Text style={styles.memberEmail}>
+                        {member.email || "No email"}
+                      </Text>
+                      <Text style={styles.memberRole}>
+                        {member.role || "user"}
+                      </Text>
                     </View>
                   </View>
 
@@ -1060,6 +1100,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     gap: 6,
+  },
+  createEmptyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 6,
+    marginTop: 20,
   },
   createButtonText: {
     color: "white",
