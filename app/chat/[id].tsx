@@ -21,7 +21,6 @@ import {
   View,
 } from "react-native";
 import EmojiSelector, { Categories } from "react-native-emoji-selector";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { canSendMessages } from "../../lib/message-permissions";
 import { supabase } from "../../lib/supabase";
@@ -34,6 +33,7 @@ interface Message {
   created_at: string;
   profiles: {
     full_name: string;
+    email: string;
   };
 }
 
@@ -57,10 +57,9 @@ export default function ChatScreen() {
   const slideAnim = useRef(new Animated.Value(50)).current;
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textInputRef = useRef<TextInput>(null);
-  const insets = useSafeAreaInsets();
 
   const chatId = params.id as string;
-  const chatName = params.name || params.email as string;
+  const chatName = params.name || (params.email as string);
 
   useEffect(() => {
     // Entrance animation
@@ -204,7 +203,7 @@ export default function ChatScreen() {
       id,
       content,
       created_at,
-      profiles (full_name)
+      profiles (full_name, email)
     `
       )
       .eq("group_id", chatId)
@@ -264,7 +263,6 @@ export default function ChatScreen() {
       setSending(false);
     }
   };
-
 
   const handleEmojiSelect = (emoji: string) => {
     setNewMessage((prev) => prev + emoji);
@@ -329,7 +327,7 @@ export default function ChatScreen() {
           {/* Sender name (only once, and not for my messages) */}
           {!alignRight && (
             <Text style={styles.senderName}>
-              {item.profiles?.full_name || "Unknown"}
+              {item.profiles?.full_name || item.profiles?.email || "Unknown"}
             </Text>
           )}
 

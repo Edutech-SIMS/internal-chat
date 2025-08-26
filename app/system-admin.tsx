@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -8,6 +9,7 @@ import {
   RefreshControl,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -15,6 +17,7 @@ import {
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
+
 interface School {
   id: string;
   name: string;
@@ -50,7 +53,7 @@ export default function SystemAdminPage() {
   const [themeColor, setThemeColor] = useState("#4CAF50"); // default
   const [logoFile, setLogoFile] = useState<any>(null); // picked file
   const [creatingSchool, setCreatingSchool] = useState(false);
-
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   // Admin creation
   const [adminForms, setAdminForms] = useState<Record<string, AdminFormData>>(
@@ -99,46 +102,36 @@ export default function SystemAdminPage() {
     try {
       console.log("Logo file details:", file);
 
-      // Validate file
       if (!file?.uri) {
         throw new Error("Invalid logo file: No URI found");
       }
 
-      // Extract file extension
-      const fileExt = file.uri.split(".").pop()?.toLowerCase();
-      if (!fileExt) {
-        throw new Error("Could not determine file extension");
-      }
-
-      // Use the correct file path (matching manual upload: school-logos/<schoolId>.<fileExt>)
+      const fileExt = file.uri.split(".").pop()?.toLowerCase() || "jpg";
       const fileName = `school-logos/${schoolId}.${fileExt}`;
       console.log("Uploading logo to path:", fileName);
 
-      // Fetch and convert to blob
-      const response = await fetch(file.uri);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file: ${response.statusText}`);
-      }
-      const blob = await response.blob();
-      console.log("Blob created successfully, size:", blob.size);
+      // Create FormData - this is the key difference
+      const formData = new FormData();
+      formData.append("file", {
+        uri: file.uri,
+        name: fileName,
+        type: file.type || `image/${fileExt === "jpg" ? "jpeg" : fileExt}`,
+      } as any);
 
-      // Optional: Check file size (e.g., max 5MB)
-      if (blob.size > 5 * 1024 * 1024) {
-        throw new Error("Logo file is too large (max 5MB)");
-      }
-
-      // Upload file to Supabase storage
+      // Upload using Supabase storage
       const { data, error } = await supabase.storage
-        .from("assets") // Match your bucket name
-        .upload(fileName, blob, {
+        .from("assets")
+        .upload(fileName, formData, {
           upsert: true,
-          contentType: `image/${fileExt === "jpg" ? "jpeg" : fileExt}`,
+          contentType:
+            file.type || `image/${fileExt === "jpg" ? "jpeg" : fileExt}`,
         });
 
       if (error) {
         console.error("Upload error:", error);
         throw new Error(`Upload failed: ${error.message}`);
       }
+
       console.log("Upload successful:", data);
 
       // Get public URL
@@ -149,15 +142,8 @@ export default function SystemAdminPage() {
       if (!urlData?.publicUrl) {
         throw new Error("Failed to retrieve public URL");
       }
+
       console.log("Public URL:", urlData.publicUrl);
-
-      // Verify the URL matches the expected format
-      const expectedPrefix =
-        "https://ovgkpnyyigipuwsgnjrn.supabase.co/storage/v1/object/public/assets/";
-      if (!urlData.publicUrl.startsWith(expectedPrefix)) {
-        console.warn("Generated URL may be incorrect:", urlData.publicUrl);
-      }
-
       return urlData.publicUrl;
     } catch (error: any) {
       console.error("uploadLogo error:", error);
@@ -244,6 +230,7 @@ export default function SystemAdminPage() {
       setDisplayName("");
       setThemeColor("#4CAF50");
       setLogoFile(null);
+      setShowCreateForm(false);
 
       await fetchSchools();
     } catch (err: any) {
@@ -481,90 +468,151 @@ export default function SystemAdminPage() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Fixed Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Text style={styles.title}>System Administration</Text>
+          <Text style={styles.subtitle}>Manage schools and administrators</Text>
+        </View>
+        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+          <Ionicons name="log-out-outline" size={20} color="white" />
+          <Text style={styles.logoutButtonText}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
-        {/* Header with Logout */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>System Administration</Text>
-            <Text style={styles.subtitle}>
-              Manage schools and administrators
-            </Text>
+        {/* Quick Stats Card */}
+        <View style={styles.statsCard}>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{schools.length}</Text>
+            <Text style={styles.statLabel}>Total Schools</Text>
           </View>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutButtonText}>Logout</Text>
-          </TouchableOpacity>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {
+                schools.filter((s) =>
+                  s.profiles?.some((p) => p.role === "admin")
+                ).length
+              }
+            </Text>
+            <Text style={styles.statLabel}>Active Schools</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {
+                schools.filter(
+                  (s) => !s.profiles?.some((p) => p.role === "admin")
+                ).length
+              }
+            </Text>
+            <Text style={styles.statLabel}>Pending Setup</Text>
+          </View>
         </View>
 
-        {/* Create School Section */}
+        {/* Create School Section - Collapsible */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Create New School</Text>
-
-          <TextInput
-            placeholder="Internal Name"
-            value={schoolName}
-            onChangeText={setSchoolName}
-            style={styles.input}
-            editable={!creatingSchool}
-          />
-
-          <TextInput
-            placeholder="Display Name"
-            value={displayName}
-            onChangeText={setDisplayName}
-            style={styles.input}
-            editable={!creatingSchool}
-          />
-
-          {/* Color Picker */}
-          <View style={{ marginBottom: 12 }}>
-            <Text style={{ marginBottom: 4 }}>Theme Color</Text>
-            <TextInput
-              value={themeColor}
-              onChangeText={setThemeColor}
-              placeholder="#4CAF50"
-              style={styles.input}
+          <TouchableOpacity
+            style={styles.sectionHeader}
+            onPress={() => setShowCreateForm(!showCreateForm)}
+          >
+            <Text style={styles.sectionTitle}>Create New School</Text>
+            <Ionicons
+              name={showCreateForm ? "chevron-up" : "chevron-down"}
+              size={20}
+              color="#64748b"
             />
-          </View>
-
-          {/* Logo Picker */}
-          <TouchableOpacity
-            onPress={pickLogo}
-            style={[styles.primaryButton, { marginBottom: 12 }]}
-          >
-            <Text style={styles.buttonText}>
-              {logoFile ? "Change Logo" : "Upload Logo"}
-            </Text>
           </TouchableOpacity>
-          {logoFile && (
-            <Text style={{ marginBottom: 12 }}>
-              Selected: {logoFile.name || "Logo selected"}
-            </Text>
+
+          {showCreateForm && (
+            <View style={styles.createForm}>
+              <TextInput
+                placeholder="Internal Name (for system use)"
+                value={schoolName}
+                onChangeText={setSchoolName}
+                style={styles.input}
+                editable={!creatingSchool}
+              />
+
+              <TextInput
+                placeholder="Display Name (shown to users)"
+                value={displayName}
+                onChangeText={setDisplayName}
+                style={styles.input}
+                editable={!creatingSchool}
+              />
+
+              {/* Color Picker */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.inputLabel}>Theme Color</Text>
+                <TextInput
+                  value={themeColor}
+                  onChangeText={setThemeColor}
+                  placeholder="#4CAF50"
+                  style={styles.input}
+                />
+              </View>
+
+              {/* Logo Picker */}
+              <Text style={styles.inputLabel}>School Logo</Text>
+              <TouchableOpacity
+                onPress={pickLogo}
+                style={[styles.secondaryButton, { marginBottom: 12 }]}
+              >
+                <Ionicons name="image-outline" size={16} color="#007AFF" />
+                <Text style={styles.secondaryButtonText}>
+                  {logoFile ? "Change Logo" : "Select Logo"}
+                </Text>
+              </TouchableOpacity>
+              {logoFile && (
+                <Text style={[styles.inputHelpText, { marginBottom: 12 }]}>
+                  Selected: {logoFile.name || "Logo selected"}
+                </Text>
+              )}
+
+              <TouchableOpacity
+                onPress={handleCreateSchool}
+                disabled={creatingSchool}
+                style={[
+                  styles.primaryButton,
+                  creatingSchool && styles.disabledButton,
+                ]}
+              >
+                {creatingSchool ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="add-circle-outline"
+                      size={18}
+                      color="white"
+                    />
+                    <Text style={styles.buttonText}>Create School</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           )}
-
-          <TouchableOpacity
-            onPress={handleCreateSchool}
-            disabled={creatingSchool}
-            style={[
-              styles.primaryButton,
-              creatingSchool && styles.disabledButton,
-            ]}
-          >
-            {creatingSchool ? (
-              <ActivityIndicator color="white" size="small" />
-            ) : (
-              <Text style={styles.buttonText}>Create School</Text>
-            )}
-          </TouchableOpacity>
         </View>
 
         {/* Schools List Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Schools ({schools.length})</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Schools ({schools.length})</Text>
+            <TouchableOpacity
+              onPress={fetchSchools}
+              style={styles.refreshButton}
+            >
+              <Ionicons name="refresh" size={18} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+
           {fetchingSchools && !refreshing ? (
             <View style={styles.loadingSection}>
               <ActivityIndicator color="#007AFF" />
@@ -572,6 +620,7 @@ export default function SystemAdminPage() {
             </View>
           ) : schools.length === 0 ? (
             <View style={styles.emptyState}>
+              <Ionicons name="school-outline" size={48} color="#cbd5e1" />
               <Text style={styles.emptyStateText}>No schools created yet</Text>
               <Text style={styles.emptyStateSubtext}>
                 Create your first school above
@@ -592,61 +641,149 @@ export default function SystemAdminPage() {
   );
 }
 
-const styles = {
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f8fafc",
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: "center" as const,
-    alignItems: "center" as const,
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#f8fafc",
   },
   scrollContent: {
-    padding: 20,
+    padding: 16,
     paddingBottom: 40,
   },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "white",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    shadowColor: "#000000",
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    zIndex: 10,
+  },
+  headerLeft: {
+    flex: 1,
+  },
   title: {
-    fontSize: 28,
-    fontWeight: "800" as const,
+    fontSize: 22,
+    fontWeight: "800",
     color: "#1e293b",
-    marginBottom: 4,
+    marginBottom: 2,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: "#64748b",
-    marginBottom: 32,
+  },
+  statsCard: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: "#000000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  statItem: {
+    alignItems: "center",
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#007AFF",
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    textAlign: "center",
+  },
+  statDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: "#e2e8f0",
   },
   section: {
-    marginBottom: 32,
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    shadowColor: "#000000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700" as const,
+    fontSize: 18,
+    fontWeight: "700",
     color: "#1e293b",
-    marginBottom: 16,
+  },
+  createForm: {
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    paddingTop: 16,
   },
   input: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    marginBottom: 12,
+    marginBottom: 16,
     backgroundColor: "#ffffff",
     fontSize: 16,
   },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 8,
+  },
+  inputHelpText: {
+    fontSize: 14,
+    color: "#64748b",
+    fontStyle: "italic" as const,
+  },
   primaryButton: {
     backgroundColor: "#007AFF",
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderRadius: 12,
-    alignItems: "center" as const,
-    shadowColor: "#007AFF",
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: "#007AFF",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "white",
   },
   disabledButton: {
     backgroundColor: "#94a3b8",
@@ -655,37 +792,37 @@ const styles = {
   },
   buttonText: {
     color: "#ffffff",
-    fontWeight: "600" as const,
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  secondaryButtonText: {
+    color: "#007AFF",
+    fontWeight: "600",
     fontSize: 16,
   },
   schoolCard: {
     backgroundColor: "#ffffff",
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 16,
-    shadowColor: "#000000",
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#f1f5f9",
   },
   schoolHeader: {
-    flexDirection: "row" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   schoolName: {
-    fontSize: 18,
-    fontWeight: "700" as const,
+    fontSize: 16,
+    fontWeight: "700",
     color: "#1e293b",
     flex: 1,
   },
   statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 20,
   },
   activeStatus: {
@@ -696,42 +833,42 @@ const styles = {
   },
   statusText: {
     fontSize: 12,
-    fontWeight: "600" as const,
+    fontWeight: "600",
     color: "#059669",
   },
   adminInfo: {
     backgroundColor: "#f8fafc",
-    padding: 16,
-    borderRadius: 12,
+    padding: 12,
+    borderRadius: 8,
   },
   adminLabel: {
-    fontSize: 14,
-    fontWeight: "600" as const,
+    fontSize: 12,
+    fontWeight: "600",
     color: "#64748b",
     marginBottom: 4,
   },
   adminEmail: {
-    fontSize: 16,
+    fontSize: 14,
     color: "#1e293b",
-    fontWeight: "500" as const,
+    fontWeight: "500",
   },
   adminForm: {
     marginTop: 8,
   },
   formTitle: {
-    fontSize: 16,
-    fontWeight: "600" as const,
+    fontSize: 14,
+    fontWeight: "600",
     color: "#1e293b",
     marginBottom: 12,
   },
   createAdminButton: {
     backgroundColor: "#10b981",
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 10,
-    alignItems: "center" as const,
+    alignItems: "center",
   },
   loadingSection: {
-    alignItems: "center" as const,
+    alignItems: "center",
     paddingVertical: 32,
   },
   loadingText: {
@@ -740,39 +877,37 @@ const styles = {
     color: "#64748b",
   },
   emptyState: {
-    alignItems: "center" as const,
+    alignItems: "center",
     paddingVertical: 40,
   },
   emptyStateText: {
-    fontSize: 18,
-    fontWeight: "600" as const,
+    fontSize: 16,
+    fontWeight: "600",
     color: "#64748b",
-    marginBottom: 8,
+    marginTop: 12,
+    marginBottom: 4,
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: "#9ca3af",
   },
-  header: {
-    flexDirection: "row" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
-    marginBottom: 32,
-  },
   logoutButton: {
     backgroundColor: "#ef4444",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 8,
-    shadowColor: "#ef4444",
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   logoutButtonText: {
     color: "#ffffff",
     fontSize: 14,
-    fontWeight: "600" as const,
+    fontWeight: "600",
   },
-};
+  refreshButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "#f1f5f9",
+  },
+});

@@ -32,6 +32,8 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (profile?.full_name) {
       setNewDisplayName(profile.full_name);
+    } else {
+      setNewDisplayName("");
     }
   }, [profile]);
 

@@ -14,9 +14,8 @@ export default function Splash() {
   const { user, loading: authLoading } = useAuth();
   const [ready, setReady] = useState(false);
 
-  const splashThemeColor = "#007AFF";
-  const splashLogoUrl = null; // or require('../assets/splash-icon.png')
-  const splashSchoolName = "School App";
+  const splashThemeColor = "#7489FF";
+  let splashLogoUrl = require("../assets/images/edutechsystems-logo.png");
 
   const [fadeAnim] = useState(new Animated.Value(0));
 
@@ -68,20 +67,13 @@ export default function Splash() {
         >
           {splashLogoUrl ? (
             <Image
-              source={{ uri: splashLogoUrl }}
+              source={require("../assets/images/edutechsystems-logo.png")}
               style={{
-                width: 140,
-                height: 140,
-                marginBottom: 20,
-                borderRadius: 30,
-                borderWidth: 2,
-                borderColor: "rgba(255,255,255,0.3)",
-                shadowColor: "#000",
-                shadowOpacity: 0.2,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 4 },
+                width: 250,
+                height: 150,
+                marginBottom: 10,
               }}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           ) : (
             <View
@@ -100,23 +92,12 @@ export default function Splash() {
               <Text style={{ fontSize: 60, color: "white" }}>🏫</Text>
             </View>
           )}
-
-          <Text
-            style={{
-              fontSize: 28,
-              fontWeight: "bold",
-              color: "white",
-              textAlign: "center",
-            }}
-          >
-            {splashSchoolName}
-          </Text>
         </Animated.View>
 
         <ActivityIndicator
           size="large"
           color="white"
-          style={{ marginTop: 30 }}
+          style={{ marginTop: 10 }}
         />
       </View>
     );
