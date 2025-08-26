@@ -7,7 +7,7 @@ interface Profile {
   full_name: string | null;
   role: string | null;
   avatar_url?: string | null;
-  school_id?: string | null; 
+  school_id?: string | null;
 }
 
 interface AuthContextType {
