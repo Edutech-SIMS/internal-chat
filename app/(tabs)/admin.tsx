@@ -18,16 +18,16 @@ import { supabase } from "../../lib/supabase";
 
 interface User {
   id: string;
-  email: string;
-  full_name: string;
-  role: string;
+  email: string | null;
+  full_name: string | null;
+  role: string | null;
   created_at: string;
 }
 
 interface Group {
   id: string;
-  name: string;
-  description: string;
+  name: string | null;
+  description: string | null;
   is_public: boolean;
   is_announcement: boolean;
   created_at: string;
@@ -38,8 +38,6 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(false);
-
-  useState(false);
   const { isAdmin, loading: authLoading, schoolId } = useAuth();
 
   // User creation state
@@ -56,11 +54,14 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (isAdmin) {
       const loadData = async () => {
+        setLoading(true);
         try {
           await Promise.all([fetchUsers(), fetchGroups()]);
         } catch (err: any) {
           console.error("Failed to load admin data:", err);
           setError(err.message || "Failed to load data");
+        } finally {
+          setLoading(false);
         }
       };
       loadData();
@@ -68,17 +69,19 @@ export default function AdminDashboard() {
   }, [isAdmin]);
 
   const fetchUsers = async () => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("school_id", schoolId) // <-- only users from this school
-      .order("created_at", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("school_id", schoolId)
+        .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("Error fetching users:", error);
-      throw error;
-    } else {
-      setUsers(data || []);
+      if (error) throw error;
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("Error fetching users:", err);
+      setUsers([]);
+      throw err;
     }
   };
 
@@ -93,7 +96,7 @@ export default function AdminDashboard() {
       if (groupsError) throw groupsError;
 
       const groupsWithCounts = await Promise.all(
-        groupsData.map(async (group) => {
+        (groupsData || []).map(async (group) => {
           const { count, error: countError } = await supabase
             .from("group_members")
             .select("*", { count: "exact", head: true })
@@ -106,59 +109,55 @@ export default function AdminDashboard() {
         })
       );
 
-      setGroups(groupsWithCounts);
-    } catch (error) {
-      console.error("Error fetching groups:", error);
+      setGroups(groupsWithCounts || []);
+    } catch (err: any) {
+      console.error("Error fetching groups:", err);
       setGroups([]);
-      throw error;
+      throw err;
+    }
+  };
+
+  const createUser = async () => {
+    if (!newUserEmail || !newUserPassword || !newUserName) {
+      Alert.alert("Error", "Please fill all fields");
+      return;
+    }
+
+    if (!schoolId) {
+      Alert.alert("Error", "Cannot create user: school context missing");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "admin-create-user",
+        {
+          body: {
+            email: newUserEmail,
+            password: newUserPassword,
+            full_name: newUserName,
+            school_id: schoolId,
+          },
+        }
+      );
+
+      if (error) throw new Error(error.message || "Failed to create user");
+      if (data.error) throw new Error(data.error);
+
+      Alert.alert("Success", "User created successfully!");
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserName("");
+      fetchUsers();
+    } catch (err: any) {
+      console.error("Creation error:", err);
+      Alert.alert("Error", err.message || "Failed to create user");
     } finally {
       setLoading(false);
     }
   };
-
-const createUser = async () => {
-  if (!newUserEmail || !newUserPassword || !newUserName) {
-    Alert.alert("Error", "Please fill all fields");
-    return;
-  }
-
-  if (!schoolId) {
-    Alert.alert("Error", "Cannot create user: school context missing");
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    const { data, error } = await supabase.functions.invoke("admin-create-user", {
-      body: {
-        email: newUserEmail,
-        password: newUserPassword,
-        full_name: newUserName,
-        school_id: schoolId,
-      },
-    });
-
-    if (error) {
-      throw new Error(error.message || "Failed to create user");
-    }
-
-    if (data.error) {
-      throw new Error(data.error);
-    }
-
-    Alert.alert("Success", "User created successfully!");
-    setNewUserEmail("");
-    setNewUserPassword("");
-    setNewUserName("");
-    fetchUsers();
-  } catch (error: any) {
-    console.error("Creation error:", error);
-    Alert.alert("Error", error.message || "Failed to create user");
-  } finally {
-    setLoading(false);
-  }
-};
 
   if (error) {
     return (
@@ -173,7 +172,6 @@ const createUser = async () => {
             fetchUsers();
             fetchGroups();
           }}
-          accessibilityLabel="Retry loading data"
         >
           <Text style={styles.buttonText}>Retry</Text>
         </TouchableOpacity>
@@ -181,7 +179,7 @@ const createUser = async () => {
     );
   }
 
-  if (authLoading) {
+  if (authLoading || loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -196,6 +194,7 @@ const createUser = async () => {
 
   return (
     <View style={styles.container}>
+      {/* Header & Stats */}
       <View style={styles.header}>
         <Text style={styles.title}>Admin Dashboard</Text>
         <View style={styles.stats}>
@@ -210,12 +209,9 @@ const createUser = async () => {
         </View>
       </View>
 
-      {/* Tab Navigation */}
+      {/* Tabs */}
       <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, styles.activeTab]}
-          accessibilityLabel="Users tab"
-        >
+        <TouchableOpacity style={[styles.tab, styles.activeTab]}>
           <Ionicons name="people" size={20} color="#007AFF" />
           <Text style={[styles.tabText, styles.activeTabText]}>
             User Management
@@ -224,56 +220,51 @@ const createUser = async () => {
       </View>
 
       <ScrollView style={styles.content}>
-        <View>
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Create New User</Text>
-            <TextInput
-              placeholder="Full Name"
-              value={newUserName}
-              onChangeText={setNewUserName}
-              style={styles.input}
-              accessibilityLabel="Full name input"
-            />
-            <TextInput
-              placeholder="Email"
-              value={newUserEmail}
-              onChangeText={setNewUserEmail}
-              style={styles.input}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              accessibilityLabel="Email input"
-            />
-            <TextInput
-              placeholder="Password"
-              value={newUserPassword}
-              onChangeText={setNewUserPassword}
-              secureTextEntry
-              style={styles.input}
-              accessibilityLabel="Password input"
-            />
-            <TouchableOpacity
-              style={[styles.button, loading && styles.buttonDisabled]}
-              onPress={createUser}
-              disabled={loading}
-              accessibilityLabel="Create user button"
-            >
-              <Text style={styles.buttonText}>
-                {loading ? "Creating..." : "Create User"}
-              </Text>
-            </TouchableOpacity>
-          </View>
+        {/* Create User */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Create New User</Text>
+          <TextInput
+            placeholder="Full Name"
+            value={newUserName}
+            onChangeText={setNewUserName}
+            style={styles.input}
+          />
+          <TextInput
+            placeholder="Email"
+            value={newUserEmail}
+            onChangeText={setNewUserEmail}
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            placeholder="Password"
+            value={newUserPassword}
+            onChangeText={setNewUserPassword}
+            secureTextEntry
+            style={styles.input}
+          />
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={createUser}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>
+              {loading ? "Creating..." : "Create User"}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-          <View>
-            <TouchableOpacity
-              style={[styles.button, styles.secondaryButton]}
-              onPress={() => setUsersModalVisible(true)}
-              accessibilityLabel="View all users"
-            >
-              <Text style={{ color: "#007AFF", fontSize: 17 }}>
-                View All Users
-              </Text>
-            </TouchableOpacity>
-          </View>
+        {/* View Users */}
+        <View>
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => setUsersModalVisible(true)}
+          >
+            <Text style={{ color: "#007AFF", fontSize: 17 }}>
+              View All Users
+            </Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -288,10 +279,7 @@ const createUser = async () => {
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>All Users</Text>
-              <TouchableOpacity
-                onPress={() => setUsersModalVisible(false)}
-                accessibilityLabel="Close users modal"
-              >
+              <TouchableOpacity onPress={() => setUsersModalVisible(false)}>
                 <Ionicons name="close" size={24} color="#1a1c1e" />
               </TouchableOpacity>
             </View>
@@ -304,19 +292,27 @@ const createUser = async () => {
                     <View style={styles.cardContent}>
                       <View style={styles.avatar}>
                         <Text style={styles.avatarText}>
-                          {item.full_name.charAt(0).toUpperCase()}
+                          {item.full_name
+                            ? item.full_name.charAt(0).toUpperCase()
+                            : "U"}
                         </Text>
                       </View>
                       <View style={styles.cardInfo}>
-                        <Text style={styles.cardTitle}>{item.full_name}</Text>
-                        <Text style={styles.cardSubtitle}>{item.email}</Text>
+                        <Text style={styles.cardTitle}>
+                          {item.full_name || "Unnamed User"}
+                        </Text>
+                        <Text style={styles.cardSubtitle}>
+                          {item.email || "No email"}
+                        </Text>
                         <View
                           style={[
                             styles.badge,
                             item.role === "admin" && styles.adminBadge,
                           ]}
                         >
-                          <Text style={styles.badgeText}>{item.role}</Text>
+                          <Text style={styles.badgeText}>
+                            {item.role || "user"}
+                          </Text>
                         </View>
                       </View>
                     </View>
