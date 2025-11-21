@@ -3,10 +3,14 @@ import { Redirect } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -38,16 +42,38 @@ interface Group {
   member_count: number;
 }
 
+interface GroupMember {
+  id: string;
+  email: string;
+  full_name: string;
+  user_id: string;
+  roles: UserRole[];
+}
+
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [isUsersModalVisible, setUsersModalVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const { isAdmin, schoolId } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"users" | "settings">("users");
+  // Group management state
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupDescription, setNewGroupDescription] = useState("");
+  const [newGroupIsPublic, setNewGroupIsPublic] = useState(true);
+  const [newGroupIsAnnouncement, setNewGroupIsAnnouncement] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+
+  const [activeTab, setActiveTab] = useState<"users" | "groups" | "settings">(
+    "users"
+  );
+  const [isCreateGroupModalVisible, setCreateGroupModalVisible] =
+    useState(false);
+  const [isGroupDetailsModalVisible, setGroupDetailsModalVisible] =
+    useState(false);
 
   useEffect(() => {
     const checkAdminStatus = async () => {
@@ -175,6 +201,172 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchGroupMembers = async (groupId: string) => {
+    try {
+      // First get the group members
+      const { data: memberData, error: memberError } = await supabase
+        .from("group_members")
+        .select("user_id")
+        .eq("group_id", groupId);
+
+      if (memberError) throw memberError;
+
+      // Extract user IDs
+      const userIds = memberData?.map((member) => member.user_id) || [];
+
+      if (userIds.length === 0) {
+        setGroupMembers([]);
+        return;
+      }
+
+      // Fetch profiles for these users
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, user_id")
+        .in("user_id", userIds);
+
+      if (profilesError) throw profilesError;
+
+      // Fetch roles for these users
+      const { data: userRoles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("user_id, role")
+        .in("user_id", userIds);
+
+      if (rolesError) throw rolesError;
+
+      // Group roles by user_id
+      const rolesByUser: Record<string, UserRole[]> = {};
+      userRoles?.forEach((role) => {
+        if (!rolesByUser[role.user_id]) {
+          rolesByUser[role.user_id] = [];
+        }
+        // Create proper UserRole objects
+        rolesByUser[role.user_id].push({
+          id: `${role.user_id}-${role.role}`,
+          user_id: role.user_id,
+          role: role.role,
+          created_at: new Date().toISOString(),
+        });
+      });
+
+      // Combine profiles with their roles
+      const membersWithRoles: GroupMember[] =
+        profiles?.map((profile) => ({
+          ...profile,
+          roles: rolesByUser[profile.user_id] || [],
+        })) || [];
+
+      setGroupMembers(membersWithRoles);
+    } catch (error) {
+      console.error("Error fetching group members:", error);
+      Alert.alert("Error", "Failed to load group members");
+    }
+  };
+
+  const createGroup = async () => {
+    if (!newGroupName.trim()) {
+      Alert.alert("Error", "Group name is required");
+      return;
+    }
+
+    setCreateLoading(true);
+    try {
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError || !authUser) throw new Error("No authenticated user");
+
+      const { data: groupData, error: insertError } = await supabase
+        .from("groups")
+        .insert({
+          name: newGroupName,
+          description: newGroupDescription,
+          is_public: newGroupIsPublic,
+          is_announcement: newGroupIsAnnouncement,
+          created_by: authUser.id,
+          school_id: schoolId,
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      const { error: memberError } = await supabase
+        .from("group_members")
+        .insert({ user_id: authUser.id, group_id: groupData.id });
+      if (memberError) throw memberError;
+
+      Alert.alert("Success", "Group created successfully!");
+      setNewGroupName("");
+      setNewGroupDescription("");
+      setNewGroupIsPublic(true);
+      setNewGroupIsAnnouncement(false);
+      setCreateGroupModalVisible(false);
+      fetchGroups();
+    } catch (error: any) {
+      console.error("Group creation error:", error);
+      Alert.alert("Error", error.message || "Failed to create group");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const deleteGroup = async (groupId: string) => {
+    Alert.alert(
+      "Delete Group",
+      "Are you sure you want to delete this group? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Delete group members first
+              const { error: membersError } = await supabase
+                .from("group_members")
+                .delete()
+                .eq("group_id", groupId);
+
+              if (membersError) throw membersError;
+
+              // Delete messages
+              const { error: messagesError } = await supabase
+                .from("messages")
+                .delete()
+                .eq("group_id", groupId);
+
+              if (messagesError) throw messagesError;
+
+              // Delete the group itself
+              const { error: groupError } = await supabase
+                .from("groups")
+                .delete()
+                .eq("id", groupId);
+
+              if (groupError) throw groupError;
+
+              Alert.alert("Success", "Group deleted successfully!");
+              fetchGroups();
+              setGroupDetailsModalVisible(false);
+            } catch (error: any) {
+              console.error("Group deletion error:", error);
+              Alert.alert("Error", error.message || "Failed to delete group");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const viewGroupDetails = async (group: Group) => {
+    setSelectedGroup(group);
+    setGroupDetailsModalVisible(true);
+    await fetchGroupMembers(group.id);
+  };
+
   if (error) {
     return (
       <View style={styles.errorContainer}>
@@ -225,59 +417,250 @@ export default function AdminDashboard() {
         </View>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "users" && styles.activeTab]}
-          onPress={() => setActiveTab("users")}
-        >
-          <Ionicons
-            name="people"
-            size={20}
-            color={activeTab === "users" ? "#007AFF" : "#666"}
-          />
-          <Text
+      {/* Improved Tab Navigation */}
+      <View style={styles.tabNavigation}>
+        <View style={styles.tabBar}>
+          <TouchableOpacity
             style={[
-              styles.tabText,
-              activeTab === "users" && styles.activeTabText,
+              styles.tabItem,
+              activeTab === "users" && styles.activeTabItem,
             ]}
+            onPress={() => setActiveTab("users")}
           >
-            User Management
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "settings" && styles.activeTab]}
-          onPress={() => setActiveTab("settings")}
-        >
-          <Ionicons
-            name="settings"
-            size={20}
-            color={activeTab === "settings" ? "#007AFF" : "#666"}
-          />
-          <Text
+            <Ionicons
+              name="people"
+              size={20}
+              color={activeTab === "users" ? "#007AFF" : "#666"}
+            />
+            <Text
+              style={[
+                styles.tabItemText,
+                activeTab === "users" && styles.activeTabItemText,
+              ]}
+            >
+              Users
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[
-              styles.tabText,
-              activeTab === "settings" && styles.activeTabText,
+              styles.tabItem,
+              activeTab === "groups" && styles.activeTabItem,
             ]}
+            onPress={() => setActiveTab("groups")}
           >
-            Settings
-          </Text>
-        </TouchableOpacity>
+            <Ionicons
+              name="chatbubbles"
+              size={20}
+              color={activeTab === "groups" ? "#007AFF" : "#666"}
+            />
+            <Text
+              style={[
+                styles.tabItemText,
+                activeTab === "groups" && styles.activeTabItemText,
+              ]}
+            >
+              Groups
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.tabItem,
+              activeTab === "settings" && styles.activeTabItem,
+            ]}
+            onPress={() => setActiveTab("settings")}
+          >
+            <Ionicons
+              name="settings"
+              size={20}
+              color={activeTab === "settings" ? "#007AFF" : "#666"}
+            />
+            <Text
+              style={[
+                styles.tabItemText,
+                activeTab === "settings" && styles.activeTabItemText,
+              ]}
+            >
+              Settings
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Active Tab Indicator */}
+        <View
+          style={[
+            styles.tabIndicator,
+            {
+              left: `${
+                activeTab === "users"
+                  ? 0
+                  : activeTab === "groups"
+                  ? 33.33
+                  : 66.66
+              }%`,
+              width: "33.33%",
+            },
+          ]}
+        />
       </View>
 
       <ScrollView style={styles.content}>
         {activeTab === "users" ? (
           <>
-            {/* View Users */}
-            <View>
-              <TouchableOpacity
-                style={[styles.button, styles.secondaryButton]}
-                onPress={() => setUsersModalVisible(true)}
-              >
-                <Text style={{ color: "#007AFF", fontSize: 17 }}>
-                  View All Users
-                </Text>
-              </TouchableOpacity>
+            {/* User Management Section */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Users</Text>
+              <Text style={styles.sectionDescription}>
+                All users in your organization
+              </Text>
+
+              {users.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="people-outline" size={60} color="#ccc" />
+                  <Text style={styles.emptyText}>No users found</Text>
+                  <Text style={styles.emptySubtext}>
+                    Users will appear here once they join your organization
+                  </Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={users}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <View style={styles.card}>
+                      <View style={styles.cardContent}>
+                        <View style={styles.avatar}>
+                          <Text style={styles.avatarText}>
+                            {item.full_name
+                              ? item.full_name.charAt(0).toUpperCase()
+                              : "?"}
+                          </Text>
+                        </View>
+                        <View style={styles.cardInfo}>
+                          <Text style={styles.cardTitle}>
+                            {item.full_name || "Unnamed User"}
+                          </Text>
+                          <Text style={styles.cardSubtitle} numberOfLines={1}>
+                            {item.email || "No email provided"}
+                          </Text>
+                          <View style={styles.badges}>
+                            {item.roles &&
+                              item.roles.map((role) => (
+                                <View
+                                  key={role.id}
+                                  style={[
+                                    styles.badge,
+                                    role.role === "admin"
+                                      ? styles.adminBadge
+                                      : styles.badge,
+                                  ]}
+                                >
+                                  <Text style={styles.badgeText}>
+                                    {role.role}
+                                  </Text>
+                                </View>
+                              ))}
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                  scrollEnabled={false}
+                />
+              )}
+            </View>
+          </>
+        ) : activeTab === "groups" ? (
+          <>
+            {/* Group Management */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Manage Groups</Text>
+                <TouchableOpacity
+                  style={styles.addButton}
+                  onPress={() => setCreateGroupModalVisible(true)}
+                >
+                  <Ionicons name="add" size={20} color="white" />
+                  <Text style={styles.addButtonText}>Create Group</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.sectionDescription}>
+                Create and manage groups for your organization
+              </Text>
+
+              {groups.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="chatbubbles-outline" size={60} color="#ccc" />
+                  <Text style={styles.emptyText}>No groups created yet</Text>
+                  <Text style={styles.emptySubtext}>
+                    Create your first group to get started
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.button, styles.createEmptyButton]}
+                    onPress={() => setCreateGroupModalVisible(true)}
+                  >
+                    <Ionicons name="add" size={20} color="white" />
+                    <Text style={styles.buttonText}>
+                      Create Your First Group
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <FlatList
+                  data={groups}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <View style={styles.card}>
+                      <View style={styles.cardContent}>
+                        <View style={styles.avatar}>
+                          <Ionicons name="people" size={24} color="white" />
+                        </View>
+                        <View style={styles.cardInfo}>
+                          <Text style={styles.cardTitle}>{item.name}</Text>
+                          <Text style={styles.cardSubtitle} numberOfLines={1}>
+                            {item.description || "No description"}
+                          </Text>
+                          <View style={styles.badges}>
+                            {item.is_announcement && (
+                              <View
+                                style={[styles.badge, styles.announcementBadge]}
+                              >
+                                <Text style={styles.badgeText}>
+                                  Announcement
+                                </Text>
+                              </View>
+                            )}
+                            {item.is_public ? (
+                              <View style={[styles.badge, styles.publicBadge]}>
+                                <Text style={styles.badgeText}>Public</Text>
+                              </View>
+                            ) : (
+                              <View style={[styles.badge, styles.badge]}>
+                                <Text style={styles.badgeText}>Private</Text>
+                              </View>
+                            )}
+                            <View style={[styles.badge, styles.badge]}>
+                              <Text style={styles.badgeText}>
+                                {item.member_count} member
+                                {item.member_count !== 1 ? "s" : ""}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.cardAction}
+                          onPress={() => viewGroupDetails(item)}
+                        >
+                          <Text style={styles.cardActionText}>Manage</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                  scrollEnabled={false}
+                />
+              )}
             </View>
           </>
         ) : (
@@ -286,30 +669,316 @@ export default function AdminDashboard() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>System Settings</Text>
               <Text style={styles.sectionDescription}>
-                Additional administrative settings and configurations will be
-                available here.
+                Configure your organization&apos;s settings and preferences
               </Text>
-              <View style={styles.settingItem}>
-                <Ionicons name="information-circle" size={24} color="#007AFF" />
-                <View style={styles.settingContent}>
-                  <Text style={styles.settingTitle}>User Management</Text>
-                  <Text style={styles.settingDescription}>
-                    View and manage all users in your organization
-                  </Text>
+
+              <View style={styles.settingCategory}>
+                <Text style={styles.settingCategoryTitle}>Organization</Text>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="business" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>
+                      Organization Profile
+                    </Text>
+                    <Text style={styles.settingDescription}>
+                      Update your organization&apos;s name, logo, and
+                      information
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {}}
+                  >
+                    <Text style={styles.settingActionText}>Edit</Text>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  style={styles.settingAction}
-                  onPress={() => {
-                    setActiveTab("users");
-                  }}
-                >
-                  <Text style={styles.settingActionText}>Manage</Text>
-                </TouchableOpacity>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="shield" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>Security Settings</Text>
+                    <Text style={styles.settingDescription}>
+                      Configure authentication and security policies
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {}}
+                  >
+                    <Text style={styles.settingActionText}>Manage</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.settingCategory}>
+                <Text style={styles.settingCategoryTitle}>User Management</Text>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="people" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>User Roles</Text>
+                    <Text style={styles.settingDescription}>
+                      Define roles and permissions for users
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {
+                      setActiveTab("users");
+                    }}
+                  >
+                    <Text style={styles.settingActionText}>Manage</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="chatbubbles" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>Group Settings</Text>
+                    <Text style={styles.settingDescription}>
+                      Configure group creation and management policies
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {
+                      setActiveTab("groups");
+                    }}
+                  >
+                    <Text style={styles.settingActionText}>Manage</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.settingCategory}>
+                <Text style={styles.settingCategoryTitle}>Notifications</Text>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="mail" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>Email Notifications</Text>
+                    <Text style={styles.settingDescription}>
+                      Configure email notification preferences
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {}}
+                  >
+                    <Text style={styles.settingActionText}>Configure</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.settingItem}>
+                  <Ionicons name="notifications" size={24} color="#007AFF" />
+                  <View style={styles.settingContent}>
+                    <Text style={styles.settingTitle}>Push Notifications</Text>
+                    <Text style={styles.settingDescription}>
+                      Configure push notification settings
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.settingAction}
+                    onPress={() => {}}
+                  >
+                    <Text style={styles.settingActionText}>Configure</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </>
         )}
       </ScrollView>
+
+      {/* Create Group Modal */}
+      <Modal
+        visible={isCreateGroupModalVisible}
+        animationType="slide"
+        transparent
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create New Group</Text>
+              <TouchableOpacity
+                onPress={() => setCreateGroupModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              <TextInput
+                placeholder="Group Name"
+                value={newGroupName}
+                onChangeText={setNewGroupName}
+                style={styles.input}
+                placeholderTextColor="#888"
+              />
+              <TextInput
+                placeholder="Description (Optional)"
+                value={newGroupDescription}
+                onChangeText={setNewGroupDescription}
+                style={[styles.input, styles.textArea]}
+                placeholderTextColor="#888"
+                multiline
+              />
+
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Public Group</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.switch,
+                    newGroupIsPublic && styles.switchActive,
+                  ]}
+                  onPress={() => {
+                    setNewGroupIsPublic(!newGroupIsPublic);
+                    // If making public, ensure it's not announcement-only
+                    if (!newGroupIsPublic && newGroupIsAnnouncement) {
+                      setNewGroupIsAnnouncement(false);
+                    }
+                  }}
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      newGroupIsPublic && styles.switchThumbActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Announcement Group</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.switch,
+                    newGroupIsAnnouncement && styles.switchActive,
+                  ]}
+                  onPress={() => {
+                    setNewGroupIsAnnouncement(!newGroupIsAnnouncement);
+                    // If making announcement-only, ensure it's not public
+                    if (!newGroupIsAnnouncement && newGroupIsPublic) {
+                      setNewGroupIsPublic(false);
+                    }
+                  }}
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      newGroupIsAnnouncement && styles.switchThumbActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, createLoading && styles.buttonDisabled]}
+                onPress={createGroup}
+                disabled={createLoading}
+              >
+                <Text style={styles.buttonText}>
+                  {createLoading ? "Creating..." : "Create Group"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Group Details Modal */}
+      <Modal visible={isGroupDetailsModalVisible} animationType="slide">
+        <View style={styles.container}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              onPress={() => setGroupDetailsModalVisible(false)}
+            >
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>
+              {selectedGroup?.name || "Group Details"}
+            </Text>
+            <TouchableOpacity
+              onPress={() => deleteGroup(selectedGroup?.id || "")}
+            >
+              <Ionicons name="trash" size={24} color="#dc3545" />
+            </TouchableOpacity>
+          </View>
+
+          {selectedGroup && (
+            <ScrollView style={styles.modalContent}>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Group Information</Text>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Name</Text>
+                  <Text style={styles.infoValue}>{selectedGroup.name}</Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Description</Text>
+                  <Text style={styles.infoValue}>
+                    {selectedGroup.description || "No description"}
+                  </Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Type</Text>
+                  <Text style={styles.infoValue}>
+                    {selectedGroup.is_announcement ? "Announcement" : "Chat"}{" "}
+                    Group
+                  </Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Visibility</Text>
+                  <Text style={styles.infoValue}>
+                    {selectedGroup.is_public ? "Public" : "Private"}
+                  </Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Members</Text>
+                  <Text style={styles.infoValue}>
+                    {selectedGroup.member_count} member
+                    {selectedGroup.member_count !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Members</Text>
+                {groupMembers.length === 0 ? (
+                  <Text style={styles.emptyText}>No members in this group</Text>
+                ) : (
+                  groupMembers.map((member) => (
+                    <View key={member.id} style={styles.memberItem}>
+                      <View style={styles.memberInfo}>
+                        <View style={styles.avatar}>
+                          <Text style={styles.avatarText}>
+                            {member.full_name
+                              ? member.full_name.charAt(0).toUpperCase()
+                              : "?"}
+                          </Text>
+                        </View>
+                        <View>
+                          <Text style={styles.memberName}>
+                            {member.full_name || "Unknown User"}
+                          </Text>
+                          <Text style={styles.memberEmail}>
+                            {member.email || "No email"}
+                          </Text>
+                          <Text style={styles.memberRole}>
+                            {member.roles && member.roles.length > 0
+                              ? member.roles[0].role
+                              : "user"}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -454,6 +1123,12 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     marginBottom: 20,
   },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
   input: {
     borderWidth: 1,
     borderColor: "#d0d4d8",
@@ -582,6 +1257,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#6b7280",
     marginBottom: 16,
+    textAlign: "center",
+  },
+  emptySubtext: {
+    fontSize: 12,
+    color: "#888",
+    marginBottom: 24,
     textAlign: "center",
   },
   pickerContainer: {
@@ -732,6 +1413,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  settingCategory: {
+    marginBottom: 24,
+  },
+  settingCategoryTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#1a1c1e",
+    marginBottom: 16,
+    marginTop: 8,
+  },
   permissionsModal: {
     width: "95%",
     maxHeight: "85%",
@@ -819,5 +1510,91 @@ const styles = StyleSheet.create({
   },
   groupOptionTextSelected: {
     color: "white",
+  },
+  addButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  addButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  createEmptyButton: {
+    marginTop: 20,
+  },
+  infoItem: {
+    marginBottom: 16,
+  },
+  infoLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  infoValue: {
+    fontSize: 16,
+    color: "#1a1c1e",
+  },
+  memberItem: {
+    marginBottom: 16,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cardAction: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  cardActionText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  tabNavigation: {
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e2e5",
+  },
+  tabBar: {
+    flexDirection: "row",
+    height: 50,
+  },
+  tabItem: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  activeTabItem: {
+    // No additional styling needed, active state is indicated by the indicator
+  },
+  tabItemText: {
+    fontSize: 16,
+    color: "#666",
+    fontWeight: "500",
+  },
+  activeTabItemText: {
+    color: "#007AFF",
+    fontWeight: "600",
+  },
+  tabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    height: 3,
+    backgroundColor: "#007AFF",
+    // Note: CSS transitions are not supported in React Native
   },
 });

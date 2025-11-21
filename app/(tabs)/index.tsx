@@ -77,7 +77,7 @@ export default function ChatsScreen() {
 
       const groupIds = userGroups.map((g) => g.group_id);
 
-      // 2️⃣ Get latest message per group
+      // Get latest message per group
       const { data: latestMessages, error: messageError } = await supabase
         .from("messages")
         .select(`id, content, created_at, group_id`)
@@ -91,7 +91,7 @@ export default function ChatsScreen() {
         if (!messageMap.has(msg.group_id)) messageMap.set(msg.group_id, msg);
       });
 
-      // 3️⃣ Format chats
+      // Format chats
       const formattedChats: Chat[] = userGroups.map((userGroup: any) => {
         const group = userGroup.groups;
         const latestMessage = messageMap.get(group.id);
@@ -132,81 +132,82 @@ export default function ChatsScreen() {
     );
   }
 
-  if (chats.length === 0) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.emptyContainer}>
-          <Ionicons name="chatbubble-ellipses-outline" size={80} color="#ccc" />
-          <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Join some groups to start chatting with your team!
-          </Text>
-          <TouchableOpacity
-            style={styles.browseButton}
-            onPress={() => router.push("/(tabs)/groups")}
-          >
-            <Text style={styles.browseButtonText}>Browse Groups</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <FlatList
-          data={chats}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.chatItem}
-              onPress={() => navigateToChat(item.id, item.name)}
-            >
-              <View style={styles.avatar}>
-                <Ionicons
-                  name={item.is_group ? "people" : "person"}
-                  size={24}
-                  color="#666"
-                />
-              </View>
-              <View style={styles.chatContent}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Text style={styles.chatName}>
-                    {item.name || "Untitled Chat"}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Chats</Text>
+        </View>
+
+        {chats.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={80}
+              color="#ccc"
+            />
+            <Text style={styles.emptyTitle}>No conversations yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Join some groups to start chatting with your team!
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={chats}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.chatItem}
+                onPress={() => navigateToChat(item.id, item.name)}
+              >
+                <View style={styles.avatar}>
+                  <Ionicons
+                    name={item.is_group ? "people" : "person"}
+                    size={24}
+                    color="#666"
+                  />
+                </View>
+                <View style={styles.chatContent}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Text style={styles.chatName}>
+                      {item.name || "Untitled Chat"}
+                    </Text>
+                    {item.is_announcement && (
+                      <Ionicons
+                        name="lock-closed"
+                        size={14}
+                        color="#666"
+                        style={{ marginLeft: 6 }}
+                      />
+                    )}
+                  </View>
+                  <Text style={styles.lastMessage} numberOfLines={1}>
+                    {item.last_message || "No messages"}
                   </Text>
-                  {item.is_announcement && (
-                    <Ionicons
-                      name="lock-closed"
-                      size={14}
-                      color="#666"
-                      style={{ marginLeft: 6 }}
-                    />
+                </View>
+
+                <View style={styles.chatMeta}>
+                  <Text style={styles.time}>
+                    {item.last_message_time
+                      ? new Date(item.last_message_time).toLocaleTimeString(
+                          [],
+                          {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }
+                        )
+                      : "--:--"}
+                  </Text>
+                  {item.unread_count > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadText}>{item.unread_count}</Text>
+                    </View>
                   )}
                 </View>
-                <Text style={styles.lastMessage} numberOfLines={1}>
-                  {item.last_message || "No messages"}
-                </Text>
-              </View>
-
-              <View style={styles.chatMeta}>
-                <Text style={styles.time}>
-                  {item.last_message_time
-                    ? new Date(item.last_message_time).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                    : "--:--"}
-                </Text>
-                {item.unread_count > 0 && (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadText}>{item.unread_count}</Text>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          )}
-        />
+              </TouchableOpacity>
+            )}
+          />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -219,6 +220,15 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  header: {
+    padding: 16,
+    backgroundColor: "#f8f9fa",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
   },
   loadingContainer: {
     flex: 1,
@@ -244,16 +254,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 30,
     lineHeight: 22,
-  },
-  browseButton: {
-    backgroundColor: "#007AFF",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  browseButtonText: {
-    color: "white",
-    fontWeight: "600",
   },
   chatItem: {
     flexDirection: "row",
