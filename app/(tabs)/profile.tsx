@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -63,6 +63,11 @@ export default function ProfileScreen() {
 
   const changePassword = async () => {
     if (!user || !newPassword || !profile?.school_id) return;
+
+    if (newPassword !== confirmPassword) {
+      Alert.alert("Error", "New passwords do not match");
+      return;
+    }
 
     setChangingPassword(true);
 
@@ -142,8 +147,8 @@ export default function ProfileScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" />
+        <View style={styles.centerContainer}>
+          <View style={styles.spinner} />
           <Text style={styles.loadingText}>Loading profile...</Text>
         </View>
       </SafeAreaView>
@@ -152,15 +157,31 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView style={styles.container}>
+      <ScrollView
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
         <View style={styles.header}>
-          <Ionicons name="person-circle" size={80} color="#007AFF" />
+          <View style={styles.avatarContainer}>
+            <Ionicons name="person-circle" size={60} color="#fff" />
+          </View>
           <Text style={styles.title}>Profile</Text>
+          <Text style={styles.subtitle}>
+            {profile?.full_name || user?.email}
+          </Text>
         </View>
 
         {/* Account Information */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Information</Text>
+          <View style={styles.sectionHeader}>
+            <Ionicons
+              name="information-circle-outline"
+              size={20}
+              color="#007AFF"
+            />
+            <Text style={styles.sectionTitle}>Account Information</Text>
+          </View>
 
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Email</Text>
@@ -179,7 +200,10 @@ export default function ProfileScreen() {
 
         {/* Update Display Name */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Display Name</Text>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="person-outline" size={20} color="#007AFF" />
+            <Text style={styles.sectionTitle}>Display Name</Text>
+          </View>
           <TextInput
             value={newDisplayName}
             onChangeText={setNewDisplayName}
@@ -206,7 +230,10 @@ export default function ProfileScreen() {
 
         {/* Change Password */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Change Password</Text>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="lock-closed-outline" size={20} color="#007AFF" />
+            <Text style={styles.sectionTitle}>Change Password</Text>
+          </View>
 
           <TextInput
             value={currentPassword}
@@ -276,10 +303,30 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#f8f9fa" },
   container: { flex: 1, padding: 20 },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
+  scrollContent: { paddingBottom: 30 },
+  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  spinner: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: "#007AFF",
+    borderTopColor: "transparent",
+    marginBottom: 16,
+  },
+  loadingText: { marginTop: 10, color: "#666", fontSize: 16 },
   header: { alignItems: "center", marginBottom: 30, paddingTop: 20 },
+  avatarContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#007AFF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 15,
+  },
   title: { fontSize: 28, fontWeight: "bold", color: "#333", marginTop: 10 },
+  subtitle: { fontSize: 16, color: "#666", marginTop: 5 },
   section: {
     backgroundColor: "white",
     borderRadius: 12,
@@ -291,11 +338,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
     color: "#333",
-    marginBottom: 16,
+    marginLeft: 8,
   },
   infoItem: {
     flexDirection: "row",
