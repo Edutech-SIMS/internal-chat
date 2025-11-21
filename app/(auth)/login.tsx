@@ -1,86 +1,47 @@
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { useAuth } from "../../contexts/AuthContext";
 import { usePushToken } from "../../contexts/PushTokenContext";
-import { supabase } from "../../lib/supabase";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { loading, signIn, hasRole } = useAuth();
   const router = useRouter();
   const { token: expoPushToken } = usePushToken();
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert("Error", "Please enter both email and password.");
-      return;
-    }
-
-    setLoading(true);
+    console.log("Login attempt started", { email });
 
     try {
-      const { data: authData, error: authError } =
-        await supabase.auth.signInWithPassword({ email, password });
+      await signIn(email, password, expoPushToken);
+      console.log("Sign in successful", {
+        hasSuperAdminRole: hasRole("superadmin"),
+        userRoles: hasRole("superadmin") ? "superadmin" : "regular user",
+      });
 
-      if (authError) {
-        Alert.alert("Login Failed", authError.message);
-        return;
-      }
-
-      if (!authData?.user) {
-        Alert.alert("Error", "No user returned from Supabase.");
-        return;
-      }
-
-      // Fetch profile
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, full_name, is_system_admin, school_id")
-        .eq("id", authData.user.id)
-        .single();
-
-      if (profileError) {
-        Alert.alert("Error", profileError.message);
-        return;
-      }
-
-      // Push token registration if available
-      if (expoPushToken && profile.id && profile.school_id) {
-        try {
-          await supabase.from("user_push_tokens").upsert(
-            {
-              user_id: profile.id,
-              school_id: profile.school_id,
-              token: expoPushToken,
-              device_platform: Platform.OS,
-            },
-            { onConflict: "user_id,school_id,token" }
-          );
-          console.log("Push token registered");
-        } catch (err) {
-          console.error("Failed to save push token:", err);
-        }
-      }
-
-      // Redirect based on role
-      if (profile.is_system_admin) {
+      // Redirect based on role - check for superadmin role
+      if (hasRole("superadmin")) {
+        console.log("Redirecting to system admin dashboard");
         router.replace("/system-admin");
       } else {
+        console.log("Redirecting to school splash");
         router.replace("/school-splash");
       }
     } catch (error: any) {
+      console.error("Login failed", {
+        email,
+        error: error.message,
+      });
       Alert.alert("Error", error.message);
-    } finally {
-      setLoading(false);
     }
   };
 

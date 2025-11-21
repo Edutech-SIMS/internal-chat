@@ -1,26 +1,30 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
 
+interface UserRole {
+  id: string;
+  user_id: string;
+  role: string;
+  created_at: string;
+}
+
 interface User {
   id: string;
   email: string | null;
   full_name: string | null;
-  role: string | null;
+  roles: UserRole[]; // Changed from role to roles array
   created_at: string;
 }
 
@@ -37,47 +41,101 @@ interface Group {
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(false);
-  const { isAdmin, loading: authLoading, schoolId } = useAuth();
-
-  // User creation state
-  const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserName, setNewUserName] = useState("");
-
-  // Modal states
   const [isUsersModalVisible, setUsersModalVisible] = useState(false);
-
-  // Error state
   const [error, setError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const { isAdmin, schoolId } = useAuth();
+
+  const [activeTab, setActiveTab] = useState<"users" | "settings">("users");
 
   useEffect(() => {
-    if (isAdmin) {
-      const loadData = async () => {
-        setLoading(true);
-        try {
-          await Promise.all([fetchUsers(), fetchGroups()]);
-        } catch (err: any) {
-          console.error("Failed to load admin data:", err);
-          setError(err.message || "Failed to load data");
-        } finally {
-          setLoading(false);
+    const checkAdminStatus = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+
+        if (error) throw error;
+
+        const user = data.user;
+        if (!user) {
+          setAuthLoading(false);
+          return;
         }
-      };
-      loadData();
-    }
-  }, [isAdmin]);
+
+        const { data: rolesData, error: rolesError } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id);
+
+        if (rolesError) throw rolesError;
+
+        const isAdmin = rolesData.some((role) => role.role === "admin");
+        if (isAdmin) {
+          const loadData = async () => {
+            setLoading(true);
+            try {
+              await Promise.all([fetchUsers(), fetchGroups()]);
+            } catch (err: any) {
+              console.error("Failed to load admin data:", err);
+              setError(err.message || "Failed to load data");
+            } finally {
+              setLoading(false);
+            }
+          };
+          loadData();
+        }
+      } catch (err: any) {
+        console.error("Error checking admin status:", err);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    checkAdminStatus();
+  }, []);
 
   const fetchUsers = async () => {
     try {
-      const { data, error } = await supabase
+      // First fetch profiles
+      const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
         .eq("school_id", schoolId)
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setUsers(Array.isArray(data) ? data : []);
+      if (profilesError) throw profilesError;
+
+      // Then fetch all user roles for these users
+      if (profiles && profiles.length > 0) {
+        const userIds = profiles.map((profile) => profile.id);
+        const { data: userRoles, error: rolesError } = await supabase
+          .from("user_roles")
+          .select("*")
+          .in("user_id", userIds);
+
+        if (rolesError) throw rolesError;
+
+        // Group roles by user_id
+        const rolesByUser: Record<string, UserRole[]> = {};
+        if (userRoles) {
+          userRoles.forEach((role) => {
+            if (!rolesByUser[role.user_id]) {
+              rolesByUser[role.user_id] = [];
+            }
+            rolesByUser[role.user_id].push(role);
+          });
+        }
+
+        // Combine profiles with their roles
+        const usersWithRoles = profiles.map((profile) => ({
+          ...profile,
+          roles: rolesByUser[profile.id] || [],
+        }));
+
+        setUsers(usersWithRoles);
+      } else {
+        setUsers([]);
+      }
     } catch (err: any) {
       console.error("Error fetching users:", err);
       setUsers([]);
@@ -114,48 +172,6 @@ export default function AdminDashboard() {
       console.error("Error fetching groups:", err);
       setGroups([]);
       throw err;
-    }
-  };
-
-  const createUser = async () => {
-    if (!newUserEmail || !newUserPassword || !newUserName) {
-      Alert.alert("Error", "Please fill all fields");
-      return;
-    }
-
-    if (!schoolId) {
-      Alert.alert("Error", "Cannot create user: school context missing");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const { data, error } = await supabase.functions.invoke(
-        "admin-create-user",
-        {
-          body: {
-            email: newUserEmail,
-            password: newUserPassword,
-            full_name: newUserName,
-            school_id: schoolId,
-          },
-        }
-      );
-
-      if (error) throw new Error(error.message || "Failed to create user");
-      if (data.error) throw new Error(data.error);
-
-      Alert.alert("Success", "User created successfully!");
-      setNewUserEmail("");
-      setNewUserPassword("");
-      setNewUserName("");
-      fetchUsers();
-    } catch (err: any) {
-      console.error("Creation error:", err);
-      Alert.alert("Error", err.message || "Failed to create user");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -211,118 +227,89 @@ export default function AdminDashboard() {
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
-        <TouchableOpacity style={[styles.tab, styles.activeTab]}>
-          <Ionicons name="people" size={20} color="#007AFF" />
-          <Text style={[styles.tabText, styles.activeTabText]}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "users" && styles.activeTab]}
+          onPress={() => setActiveTab("users")}
+        >
+          <Ionicons
+            name="people"
+            size={20}
+            color={activeTab === "users" ? "#007AFF" : "#666"}
+          />
+          <Text
+            style={[
+              styles.tabText,
+              activeTab === "users" && styles.activeTabText,
+            ]}
+          >
             User Management
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "settings" && styles.activeTab]}
+          onPress={() => setActiveTab("settings")}
+        >
+          <Ionicons
+            name="settings"
+            size={20}
+            color={activeTab === "settings" ? "#007AFF" : "#666"}
+          />
+          <Text
+            style={[
+              styles.tabText,
+              activeTab === "settings" && styles.activeTabText,
+            ]}
+          >
+            Settings
           </Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content}>
-        {/* Create User */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Create New User</Text>
-          <TextInput
-            placeholder="Full Name"
-            value={newUserName}
-            onChangeText={setNewUserName}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="Email"
-            value={newUserEmail}
-            onChangeText={setNewUserEmail}
-            style={styles.input}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            placeholder="Password"
-            value={newUserPassword}
-            onChangeText={setNewUserPassword}
-            secureTextEntry
-            style={styles.input}
-          />
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={createUser}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? "Creating..." : "Create User"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* View Users */}
-        <View>
-          <TouchableOpacity
-            style={[styles.button, styles.secondaryButton]}
-            onPress={() => setUsersModalVisible(true)}
-          >
-            <Text style={{ color: "#007AFF", fontSize: 17 }}>
-              View All Users
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-
-      {/* Users Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isUsersModalVisible}
-        onRequestClose={() => setUsersModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>All Users</Text>
-              <TouchableOpacity onPress={() => setUsersModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#1a1c1e" />
+        {activeTab === "users" ? (
+          <>
+            {/* View Users */}
+            <View>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton]}
+                onPress={() => setUsersModalVisible(true)}
+              >
+                <Text style={{ color: "#007AFF", fontSize: 17 }}>
+                  View All Users
+                </Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={styles.modalContent}>
-              {users.length === 0 ? (
-                <Text style={styles.emptyText}>No users available</Text>
-              ) : (
-                users.map((item) => (
-                  <View key={item.id} style={styles.card}>
-                    <View style={styles.cardContent}>
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>
-                          {item.full_name
-                            ? item.full_name.charAt(0).toUpperCase()
-                            : "U"}
-                        </Text>
-                      </View>
-                      <View style={styles.cardInfo}>
-                        <Text style={styles.cardTitle}>
-                          {item.full_name || "Unnamed User"}
-                        </Text>
-                        <Text style={styles.cardSubtitle}>
-                          {item.email || "No email"}
-                        </Text>
-                        <View
-                          style={[
-                            styles.badge,
-                            item.role === "admin" && styles.adminBadge,
-                          ]}
-                        >
-                          <Text style={styles.badgeText}>
-                            {item.role || "user"}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+          </>
+        ) : (
+          <>
+            {/* Settings Section */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>System Settings</Text>
+              <Text style={styles.sectionDescription}>
+                Additional administrative settings and configurations will be
+                available here.
+              </Text>
+              <View style={styles.settingItem}>
+                <Ionicons name="information-circle" size={24} color="#007AFF" />
+                <View style={styles.settingContent}>
+                  <Text style={styles.settingTitle}>User Management</Text>
+                  <Text style={styles.settingDescription}>
+                    View and manage all users in your organization
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.settingAction}
+                  onPress={() => {
+                    setActiveTab("users");
+                  }}
+                >
+                  <Text style={styles.settingActionText}>Manage</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -461,6 +448,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 20,
     color: "#1a1c1e",
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: "#6b7280",
+    marginBottom: 20,
   },
   input: {
     borderWidth: 1,
@@ -707,6 +699,38 @@ const styles = StyleSheet.create({
   },
   optionSelected: {
     backgroundColor: "#007bff22",
+  },
+  settingItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  settingContent: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  settingTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1f2937",
+    marginBottom: 4,
+  },
+  settingDescription: {
+    fontSize: 14,
+    color: "#6b7280",
+  },
+  settingAction: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  settingActionText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
   },
   permissionsModal: {
     width: "95%",

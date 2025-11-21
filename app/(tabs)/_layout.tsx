@@ -4,7 +4,7 @@ import { EventRegister } from "react-native-event-listeners";
 import { useAuth } from "../../contexts/AuthContext";
 
 export default function TabLayout() {
-  const { isAdmin } = useAuth(); // no loading/user redirect here
+  const { isAdmin } = useAuth();
 
   return (
     <Tabs screenOptions={{ headerShown: true }}>

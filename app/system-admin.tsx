@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,13 +18,20 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 
+interface UserRole {
+  id: string;
+  user_id: string;
+  role: string;
+  created_at: string;
+}
+
 interface School {
   id: string;
   name: string;
   profiles: {
     id: string;
     email: string;
-    role: string;
+    roles: UserRole[]; // Changed from role to roles
   }[];
 }
 
@@ -251,15 +258,18 @@ export default function SystemAdminPage() {
     }
 
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("is_system_admin")
-        .eq("id", user.id)
-        .single();
+      // Check if user has superadmin role instead of is_system_admin field
+      const { data: userRoles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id);
 
-      if (error) throw error;
+      if (rolesError) throw rolesError;
 
-      if (!data?.is_system_admin) {
+      const isSuperAdmin =
+        userRoles?.some((role) => role.role === "superadmin") || false;
+
+      if (!isSuperAdmin) {
         Alert.alert("Unauthorized", "You are not a system admin.");
         router.replace("/school-splash");
         return;
@@ -279,13 +289,64 @@ export default function SystemAdminPage() {
   const fetchSchools = async () => {
     setFetchingSchools(true);
     try {
-      const { data, error } = await supabase
+      // First fetch schools
+      const { data: schools, error: schoolsError } = await supabase
         .from("schools")
-        .select("id, name, profiles(id, email, role)")
+        .select("id, name")
         .order("name");
 
-      if (error) throw error;
-      setSchools(data || []);
+      if (schoolsError) throw schoolsError;
+
+      if (!schools || schools.length === 0) {
+        setSchools([]);
+        return;
+      }
+
+      // Get all profile IDs from all schools
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, email, school_id");
+
+      if (profilesError) throw profilesError;
+
+      // Get all user roles
+      const { data: userRoles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("user_id, role");
+
+      if (rolesError) throw rolesError;
+
+      // Group roles by user_id
+      const rolesByUser: Record<string, UserRole[]> = {};
+      userRoles?.forEach((role) => {
+        if (!rolesByUser[role.user_id]) {
+          rolesByUser[role.user_id] = [];
+        }
+        rolesByUser[role.user_id].push({
+          id: role.user_id, // This is a simplification, in real scenario you'd have the actual role ID
+          user_id: role.user_id,
+          role: role.role,
+          created_at: new Date().toISOString(), // This is a placeholder
+        });
+      });
+
+      // Combine profiles with their roles and group by school
+      const schoolsWithProfiles = schools.map((school) => {
+        const schoolProfiles =
+          profiles
+            ?.filter((profile) => profile.school_id === school.id)
+            .map((profile) => ({
+              ...profile,
+              roles: rolesByUser[profile.id] || [],
+            })) || [];
+
+        return {
+          ...school,
+          profiles: schoolProfiles,
+        };
+      });
+
+      setSchools(schoolsWithProfiles);
     } catch (error: any) {
       console.error("Error fetching schools:", error);
       Alert.alert("Error", "Failed to fetch schools.");
@@ -387,7 +448,9 @@ export default function SystemAdminPage() {
   };
 
   const renderSchoolCard = ({ item }: { item: School }) => {
-    const admin = item.profiles?.find((p) => p.role === "admin");
+    const admin = item.profiles?.find((p) =>
+      p.roles?.some((r) => r.role === "admin")
+    );
     const form = getAdminForm(item.id);
     const isCreatingThisAdmin = creatingAdmin === item.id;
 
@@ -497,7 +560,9 @@ export default function SystemAdminPage() {
             <Text style={styles.statNumber}>
               {
                 schools.filter((s) =>
-                  s.profiles?.some((p) => p.role === "admin")
+                  s.profiles?.some((p) =>
+                    p.roles?.some((r) => r.role === "admin")
+                  )
                 ).length
               }
             </Text>
@@ -508,7 +573,10 @@ export default function SystemAdminPage() {
             <Text style={styles.statNumber}>
               {
                 schools.filter(
-                  (s) => !s.profiles?.some((p) => p.role === "admin")
+                  (s) =>
+                    !s.profiles?.some((p) =>
+                      p.roles?.some((r) => r.role === "admin")
+                    )
                 ).length
               }
             </Text>

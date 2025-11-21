@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -49,7 +49,7 @@ export default function ChatScreen() {
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  const { user, schoolId } = useAuth();
+  const { user, profile, schoolId } = useAuth();
   const params = useLocalSearchParams();
   const router = useRouter();
   const flatListRef = useRef<FlatList>(null);
@@ -105,7 +105,8 @@ export default function ChatScreen() {
         (payload) => {
           if (payload.eventType === "INSERT") {
             const newTypingUser = payload.new.user_id;
-            if (newTypingUser !== user?.id) {
+            if (newTypingUser !== profile?.user_id) {
+              // Use profile.user_id instead of user.id
               setTypingUsers((prev) => new Set(prev).add(newTypingUser));
             }
           } else if (payload.eventType === "DELETE") {
@@ -136,7 +137,7 @@ export default function ChatScreen() {
     if (isTyping) {
       // Send typing start event
       await supabase.from("typing_indicators").upsert({
-        user_id: user.id,
+        user_id: profile?.user_id, // Use profile.user_id instead of user.id
         group_id: chatId,
         is_typing: true,
         updated_at: new Date().toISOString(),
@@ -151,17 +152,16 @@ export default function ChatScreen() {
       await supabase
         .from("typing_indicators")
         .delete()
-        .eq("user_id", user.id)
-        .eq("group_id", chatId);
+        .eq("user_id", profile?.user_id); // Use profile.user_id instead of user.id
     }
   };
 
   const checkMessagePermissions = async () => {
-    if (!user) return;
+    if (!user || !profile?.user_id) return;
 
     setCheckingPermission(true);
     try {
-      const hasPermission = await canSendMessages(chatId, user.id);
+      const hasPermission = await canSendMessages(chatId, profile.user_id); // Use profile.user_id instead of user.id
       setCanSend(hasPermission);
 
       const { data: group } = await supabase
@@ -246,7 +246,7 @@ export default function ChatScreen() {
     const { error } = await supabase.from("messages").insert([
       {
         content: newMessage,
-        user_id: user?.id,
+        user_id: profile?.user_id, // Use profile.user_id instead of user.id to match foreign key constraint
         group_id: chatId,
         school_id: schoolId,
       },
@@ -254,6 +254,7 @@ export default function ChatScreen() {
 
     if (error) {
       Alert.alert("Error", error.message);
+      console.log("Error inserting message:", error);
       setSending(false);
       return;
     }
@@ -267,7 +268,7 @@ export default function ChatScreen() {
             message: newMessage,
             group_id: chatId,
             school_id: schoolId,
-            sender_id: user!.id,
+            sender_id: profile!.user_id, // Use profile.user_id instead of user.id
           },
         }
       );

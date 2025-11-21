@@ -45,13 +45,13 @@ export default function SchoolSplash() {
       const { data: profile } = await supabase
         .from("profiles")
         .select("school_id")
-        .eq("id", user?.id)
+        .eq("user_id", user?.id)
         .single();
 
       if (profile?.school_id) {
         // Fetch school settings using the user's school_id
         const { data } = await supabase
-          .from("school_settings")
+          .from("schools")
           .select("name, logo_url, theme_color")
           .eq("school_id", profile.school_id)
           .single();

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import debounce from "lodash/debounce";
-import React, { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +19,13 @@ import { EventRegister } from "react-native-event-listeners";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
 
+interface UserRole {
+  id: string;
+  user_id: string;
+  role: string;
+  created_at: string;
+}
+
 interface Group {
   id: string;
   name: string;
@@ -34,14 +41,16 @@ interface GroupMember {
   id: string;
   email: string;
   full_name: string;
-  role: string;
+  user_id: string; // Added user_id property
+  roles: UserRole[]; // Changed from role to roles
 }
 
 interface User {
   id: string;
   email: string;
   full_name: string;
-  role: string;
+  user_id: string; // Added user_id property
+  roles: UserRole[]; // Changed from role to roles
 }
 
 interface GroupMemberResponse {
@@ -134,7 +143,7 @@ export default function GroupsScreen() {
       } else {
         const { data, error } = await supabase
           .from("group_members")
-          .select("groups!inner(*)") // ✅ flat groups
+          .select("groups!inner(*)")
           .eq("user_id", user?.id)
           .eq("groups.school_id", schoolId)
           .order("created_at", { foreignTable: "groups", ascending: false });
@@ -190,15 +199,50 @@ export default function GroupsScreen() {
 
   const fetchAllUsers = async () => {
     try {
-      const { data, error } = await supabase
+      // First fetch profiles
+      const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select("*")
+        .select("id, email, full_name, user_id") // Explicitly select user_id
         .eq("school_id", schoolId) // <-- only users from this school
         .order("created_at", { ascending: false });
 
-      if (error) throw new Error(`Failed to fetch users: ${error.message}`);
-      setAllUsers(data || []);
-      setFilteredUsers(data || []);
+      if (profilesError)
+        throw new Error(`Failed to fetch users: ${profilesError.message}`);
+
+      // Then fetch all user roles for these users
+      if (profiles && profiles.length > 0) {
+        const userIds = profiles.map((profile) => profile.user_id); // Use user_id instead of id
+        const { data: userRoles, error: rolesError } = await supabase
+          .from("user_roles")
+          .select("*")
+          .in("user_id", userIds);
+
+        if (rolesError)
+          throw new Error(`Failed to fetch user roles: ${rolesError.message}`);
+
+        // Group roles by user_id
+        const rolesByUser: Record<string, UserRole[]> = {};
+        if (userRoles) {
+          userRoles.forEach((role) => {
+            if (!rolesByUser[role.user_id]) {
+              rolesByUser[role.user_id] = [];
+            }
+            rolesByUser[role.user_id].push(role);
+          });
+        }
+
+        // Combine profiles with their roles
+        const usersWithRoles = profiles.map((profile) => ({
+          ...profile,
+          roles: rolesByUser[profile.user_id] || [], // Use user_id instead of id
+        }));
+
+        setAllUsers(usersWithRoles);
+        setFilteredUsers(usersWithRoles);
+      } else {
+        setAllUsers([]);
+        setFilteredUsers([]);
+      }
     } catch (error) {
       console.error("Error fetching users:", error);
     }
@@ -206,15 +250,65 @@ export default function GroupsScreen() {
 
   const fetchGroupMembers = async (groupId: string) => {
     try {
-      const { data, error } = await supabase
+      // First get the group members
+      const { data: memberData, error: memberError } = await supabase
         .from("group_members")
-        .select("profiles(id,email,full_name,role)")
+        .select("user_id")
         .eq("group_id", groupId);
-      if (error) throw new Error(`Failed to fetch members: ${error.message}`);
-      const members = (data as unknown as GroupMemberResponse[])
-        .map((item) => item.profiles)
-        .filter(Boolean) as GroupMember[];
-      setGroupMembers(members);
+
+      if (memberError)
+        throw new Error(`Failed to fetch members: ${memberError.message}`);
+
+      // Extract user IDs
+      const userIds = memberData?.map((member) => member.user_id) || [];
+
+      if (userIds.length === 0) {
+        setGroupMembers([]);
+        await fetchMessagePermissions(groupId);
+        return;
+      }
+
+      // Fetch profiles for these users - using user_id to match the foreign key constraint
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, user_id") // Added user_id to the select
+        .in("user_id", userIds); // Changed from "id" to "user_id" to match the foreign key
+
+      if (profilesError)
+        throw new Error(`Failed to fetch profiles: ${profilesError.message}`);
+
+      // Fetch roles for these users
+      const { data: userRoles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("user_id, role")
+        .in("user_id", userIds);
+
+      if (rolesError)
+        throw new Error(`Failed to fetch user roles: ${rolesError.message}`);
+
+      // Group roles by user_id
+      const rolesByUser: Record<string, UserRole[]> = {};
+      userRoles?.forEach((role) => {
+        if (!rolesByUser[role.user_id]) {
+          rolesByUser[role.user_id] = [];
+        }
+        // Create proper UserRole objects
+        rolesByUser[role.user_id].push({
+          id: `${role.user_id}-${role.role}`, // Create a unique ID
+          user_id: role.user_id,
+          role: role.role,
+          created_at: new Date().toISOString(),
+        });
+      });
+
+      // Combine profiles with their roles
+      const membersWithRoles: GroupMember[] =
+        profiles?.map((profile) => ({
+          ...profile,
+          roles: rolesByUser[profile.user_id] || [], // Use profile.user_id
+        })) || [];
+
+      setGroupMembers(membersWithRoles);
       await fetchMessagePermissions(groupId);
     } catch (error) {
       console.error("Error fetching group members:", error);
@@ -303,9 +397,12 @@ export default function GroupsScreen() {
     }
 
     try {
-      // Prepare batch insert
-      const membersToAdd = selectedUsers.map((userId) => ({
-        user_id: userId,
+      // Map selected user IDs to their profile user_ids
+      const usersToAdd = allUsers.filter((user) =>
+        selectedUsers.includes(user.id)
+      );
+      const membersToAdd = usersToAdd.map((user) => ({
+        user_id: user.user_id, // Use user_id instead of id to match foreign key constraint
         group_id: groupId,
       }));
 
@@ -348,12 +445,9 @@ export default function GroupsScreen() {
     }
 
     try {
-      // Get all user IDs from filteredUsers
-      const allUserIds = filteredUsers.map((user) => user.id);
-
-      // Prepare batch insert
-      const membersToAdd = allUserIds.map((userId) => ({
-        user_id: userId,
+      // Map filtered users to their profile user_ids
+      const membersToAdd = filteredUsers.map((user) => ({
+        user_id: user.user_id, // Use user_id instead of id to match foreign key constraint
         group_id: groupId,
       }));
 
@@ -365,7 +459,7 @@ export default function GroupsScreen() {
 
       Alert.alert(
         "Success",
-        `${allUserIds.length} user(s) added to group successfully!`
+        `${filteredUsers.length} user(s) added to group successfully!`
       );
       setSelectedUsers([]);
       setUserSearchQuery("");
@@ -385,11 +479,18 @@ export default function GroupsScreen() {
   const removeUserFromGroup = async (userId: string) => {
     if (!modalState.group) return;
 
+    // Find the user in groupMembers to get their user_id
+    const userToRemove = groupMembers.find((member) => member.id === userId);
+    if (!userToRemove) {
+      Alert.alert("Error", "User not found");
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from("group_members")
         .delete()
-        .eq("user_id", userId)
+        .eq("user_id", userToRemove.user_id) // Use user_id instead of id to match foreign key constraint
         .eq("group_id", modalState.group.id);
       if (error) throw new Error(`Failed to remove user: ${error.message}`);
 
@@ -692,7 +793,9 @@ export default function GroupsScreen() {
                         {member.email || "No email"}
                       </Text>
                       <Text style={styles.memberRole}>
-                        {member.role || "user"}
+                        {member.roles && member.roles.length > 0
+                          ? member.roles[0].role
+                          : "user"}
                       </Text>
                     </View>
                   </View>
@@ -1023,7 +1126,9 @@ export default function GroupsScreen() {
                         {member.email || "No email"}
                       </Text>
                       <Text style={styles.memberRole}>
-                        {member.role || "user"}
+                        {member.roles && member.roles.length > 0
+                          ? member.roles[0].role
+                          : "user"}
                       </Text>
                     </View>
                   </View>
@@ -1032,11 +1137,11 @@ export default function GroupsScreen() {
                     style={[
                       styles.permissionToggle,
                       (messagePermissions[member.id] ||
-                        member.role === "admin") &&
+                        member.roles?.some((r) => r.role === "admin")) &&
                         styles.permissionEnabled,
                     ]}
                     onPress={() => {
-                      if (member.role !== "admin") {
+                      if (!member.roles?.some((r) => r.role === "admin")) {
                         updateMessagePermission(
                           member.id,
                           !messagePermissions[member.id]
@@ -1044,7 +1149,7 @@ export default function GroupsScreen() {
                       }
                     }}
                     disabled={
-                      member.role === "admin" ||
+                      member.roles?.some((r) => r.role === "admin") ||
                       permissionLoading ===
                         `${modalState.group?.id}-${member.id}`
                     }
@@ -1054,7 +1159,7 @@ export default function GroupsScreen() {
                       <ActivityIndicator size="small" color="white" />
                     ) : (
                       <Text style={styles.permissionToggleText}>
-                        {member.role === "admin"
+                        {member.roles?.some((r) => r.role === "admin")
                           ? "Admin"
                           : messagePermissions[member.id]
                           ? "Allowed"

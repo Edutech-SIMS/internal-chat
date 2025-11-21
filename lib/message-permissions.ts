@@ -6,13 +6,17 @@ export const canSendMessages = async (
 ): Promise<boolean> => {
   try {
     // Check if user is admin
-    const { data: profile } = await supabase
-      .from("profiles")
+    const { data: userRoles, error: rolesError } = await supabase
+      .from("user_roles")
       .select("role")
-      .eq("id", userId)
-      .single();
+      .eq("user_id", userId);
 
-    if (profile?.role === "admin") {
+    if (rolesError) throw rolesError;
+
+    // Check if user has admin role
+    const isAdmin = userRoles?.some((role) => role.role === "admin") || false;
+
+    if (isAdmin) {
       return true; // Admins can always send messages
     }
 

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
   SafeAreaView,
@@ -48,7 +48,7 @@ export default function ChatsScreen() {
     setLoading(true);
 
     try {
-      // 1️⃣ Get all groups for this user in their school (server-side filter)
+      // Get all groups for this user in their school (server-side filter)
       const { data: userGroups, error: groupError } = await supabase
         .from("group_members")
         .select(
@@ -65,7 +65,7 @@ export default function ChatsScreen() {
       `
         )
         .eq("user_id", user.id)
-        .eq("groups.school_id", profile.school_id) // ✅ server-side school filter
+        .eq("groups.school_id", profile.school_id)
         .order("joined_at", { ascending: false });
 
       if (groupError) throw groupError;
