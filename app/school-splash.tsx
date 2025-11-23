@@ -1,19 +1,10 @@
 import { useAuth } from "contexts/AuthContext";
 import { Redirect, useRouter } from "expo-router";
-
-import { supabase } from "lib/supabase";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Animated,
-  Easing,
-  Image,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Animated, Image, Text, View } from "react-native";
+
 export default function SchoolSplash() {
-  const { user, loading: authLoading } = useAuth();
-  const [schoolSettings, setSchoolSettings] = useState<any>(null);
+  const { user, loading: authLoading, school } = useAuth();
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -22,74 +13,39 @@ export default function SchoolSplash() {
   const [scaleAnim] = useState(new Animated.Value(0.8));
 
   useEffect(() => {
-    if (user) {
-      fetchSchoolSettings();
-    } else {
+    // Start animations when component mounts
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        speed: 10,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Set loading to false after animations complete
+    const timer = setTimeout(() => {
       setLoading(false);
-    }
-  }, [user]);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
-    if (!loading && schoolSettings) {
-      const timer = setTimeout(() => {
+    if (!loading && school) {
+      const redirectTimer = setTimeout(() => {
         router.replace("/(tabs)");
-      }, 3000);
+      }, 2000);
 
-      return () => clearTimeout(timer);
+      return () => clearTimeout(redirectTimer);
     }
-  }, [loading, schoolSettings]);
-
-  const fetchSchoolSettings = async () => {
-    try {
-      // Get the user's school_id from their profile first
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("school_id")
-        .eq("user_id", user?.id)
-        .single();
-
-      if (profile?.school_id) {
-        // Fetch school settings using the user's school_id
-        const { data } = await supabase
-          .from("schools")
-          .select("name, logo_url, theme_color")
-          .eq("school_id", profile.school_id)
-          .single();
-
-        console.log("Fetched school settings:", data);
-
-        if (data) {
-          setSchoolSettings(data);
-        }
-      }
-    } catch (error) {
-      console.error("Error fetching school settings:", error);
-    } finally {
-      setLoading(false);
-
-      // Start animation
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      // Auto-redirect after 3 seconds
-      // setTimeout(() => setShowSplash(false), 3000);
-    }
-  };
+  }, [loading, school]);
 
   if (authLoading) {
-    // Auth state not ready yet, show nothing or a loader
     return null;
   }
 
@@ -97,9 +53,9 @@ export default function SchoolSplash() {
     return <Redirect href="/(auth)/login" />;
   }
 
-  const themeColor = schoolSettings?.theme_color || "#007AFF";
-  const schoolName = schoolSettings?.name || "School";
-  const logoUrl = schoolSettings?.logo_url;
+  const themeColor = school?.theme_color || "#007AFF";
+  const schoolName = school?.name || "School";
+  const logoUrl = school?.logo_url;
 
   return (
     <View
@@ -179,7 +135,7 @@ export default function SchoolSplash() {
             marginTop: 20,
           }}
         >
-          School Chat Platform
+          School Management and Communication Platform
         </Text>
       </Animated.View>
 

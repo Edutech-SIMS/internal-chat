@@ -1,355 +1,723 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
+import { getThemeColors } from "../../themes";
+
+interface StudentAttendance {
+  student_id: string;
+  student_name: string;
+  student_number: string;
+  status: "present" | "absent" | "late" | "excused";
+  notes?: string;
+}
 
 export default function AttendanceScreen() {
   const { hasRole, user, profile } = useAuth();
-  const [attendanceData, setAttendanceData] = useState<any[]>([]);
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
+
+  const [students, setStudents] = useState<StudentAttendance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
+  const [classInfo, setClassInfo] = useState<any>(null);
 
   const isParent = hasRole("parent");
   const isTeacher = hasRole("teacher");
-  const isAdmin = hasRole("admin") || hasRole("superadmin");
 
   useEffect(() => {
-    loadAttendanceData();
-  }, [isParent, isTeacher, isAdmin]);
+    if (isTeacher) {
+      loadTeacherAttendance();
+    } else if (isParent) {
+      loadParentAttendance();
+    }
+  }, [isTeacher, isParent, selectedDate]);
 
-  const loadAttendanceData = async () => {
-    setLoading(true);
+  const loadParentAttendance = async () => {
     try {
-      if (isParent && profile?.id) {
-        // For parents, fetch attendance for their children
-        const { data, error } = await supabase
-          .from("parent_student_links")
-          .select(
-            `
-            students (
-              id,
-              full_name,
-              student_attendance (
-                date,
-                status,
-                remark
-              )
-            )
-          `
+      setLoading(true);
+
+      // Step 1: Get parent-student links
+      const { data: links, error: linksError } = await supabase
+        .from("parent_student_links")
+        .select(`
+          student_id,
+          students!inner (
+            id,
+            first_name,
+            last_name,
+            student_id
           )
-          .eq("parent_id", profile.id)
-          .eq("school_id", profile.school_id);
+        `)
+        .eq("parent_user_id", user?.id);
 
-        if (error) throw error;
+      if (linksError) throw linksError;
 
-        const attendance =
-          data?.flatMap(
-            (link: any) =>
-              link.students?.student_attendance?.map((att: any) => ({
-                student_name: link.students.full_name,
-                date: att.date,
-                status: att.status,
-                remark: att.remark,
-              })) || []
-          ) || [];
-
-        setAttendanceData(attendance);
-      } else if (isTeacher && user?.id) {
-        // For teachers, fetch attendance for their classes
-        const { data, error } = await supabase
-          .from("teacher_assignments")
-          .select(
-            `
-            classes (
-              id,
-              class_name,
-              class_students (
-                students (
-                  full_name
-                )
-              )
-            ),
-            subjects (
-              name
-            )
-          `
-          )
-          .eq("teacher_id", user.id)
-          .eq("school_id", profile?.school_id);
-
-        if (error) throw error;
-
-        // Simplified data structure for display
-        const attendance =
-          data?.map((assignment: any) => ({
-            class_name: assignment.classes?.class_name || "Unknown Class",
-            subject: assignment.subjects?.name || "General",
-            student_count: assignment.classes?.class_students?.length || 0,
-          })) || [];
-
-        setAttendanceData(attendance);
-      } else if (isAdmin) {
-        // For admins, fetch overall attendance statistics
-        const { data, error } = await supabase
-          .from("student_attendance")
-          .select("status, count", { count: "exact" })
-          .eq("school_id", profile?.school_id);
-
-        if (error) throw error;
-
-        // Group data by status manually
-        const groupedData: any = {};
-        data?.forEach((item: any) => {
-          if (!groupedData[item.status]) {
-            groupedData[item.status] = 0;
-          }
-          groupedData[item.status] += item.count;
-        });
-
-        const groupedArray = Object.keys(groupedData).map((status) => ({
-          status,
-          count: groupedData[status],
-        }));
-
-        setAttendanceData(groupedArray);
+      if (!links || links.length === 0) {
+        setStudents([]);
+        setLoading(false);
+        return;
       }
+
+      // Step 2: Fetch attendance for these students on selected date
+      const studentIds = links.map((link: any) => link.student_id);
+      const { data: attendanceData, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*")
+        .in("student_id", studentIds)
+        .eq("date", selectedDate)
+        .eq("school_id", profile?.school_id);
+
+      if (attendanceError) throw attendanceError;
+
+      // Create attendance map
+      const attendanceMap = new Map();
+      attendanceData?.forEach((record: any) => {
+        attendanceMap.set(record.student_id, record);
+      });
+
+      // Combine data
+      const studentAttendanceData = links.map((link: any) => {
+        const student = link.students;
+        const record = attendanceMap.get(student.id);
+
+        return {
+          student_id: student.id,
+          student_name: `${student.first_name} ${student.last_name}`,
+          student_number: student.student_id,
+          status: record?.status || "present", // Default to present if no record? Or maybe "unknown"?
+          // For parents, maybe we only show if a record exists?
+          // Let's assume if no record, it's not marked yet.
+          // But for simplicity, let's keep structure consistent.
+          // Actually, if no record exists, it means attendance hasn't been taken.
+          // We should probably indicate that.
+          is_marked: !!record,
+          notes: record?.notes || "",
+        };
+      });
+
+      setStudents(studentAttendanceData);
     } catch (error) {
-      console.error("Error loading attendance data:", error);
+      console.error("Error loading parent attendance:", error);
+      Alert.alert("Error", "Failed to load attendance data");
     } finally {
       setLoading(false);
     }
   };
 
-  const renderParentContent = () => (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="calendar" size={32} color="#fff" />
-        </View>
-        <Text style={styles.title}>Children{`'`}s Attendance</Text>
-        <Text style={styles.subtitle}>
-          View attendance records for your children
-        </Text>
-      </View>
+  const loadTeacherAttendance = async () => {
+    try {
+      setLoading(true);
 
-      <View style={styles.content}>
-        {loading ? (
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderText}>
-              Loading attendance data...
-            </Text>
-          </View>
-        ) : attendanceData.length > 0 ? (
-          attendanceData.map((record: any, index: number) => (
-            <View key={index} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Ionicons name="person-outline" size={24} color="#007AFF" />
-                <Text style={styles.cardTitle}>{record.student_name}</Text>
-              </View>
-              <View style={styles.attendanceRow}>
-                <Text style={styles.attendanceDate}>{record.date}</Text>
-                <Text
-                  style={[
-                    styles.attendanceStatus,
-                    record.status === "present"
-                      ? styles.present
-                      : record.status === "absent"
-                      ? styles.absent
-                      : styles.late,
-                  ]}
-                >
-                  {record.status?.charAt(0).toUpperCase() +
-                    record.status?.slice(1)}
-                </Text>
-              </View>
-              {record.remark && (
-                <Text style={styles.attendanceRemark}>{record.remark}</Text>
-              )}
-            </View>
-          ))
-        ) : (
-          <View style={styles.card}>
-            <View style={styles.placeholderContainer}>
-              <Ionicons name="calendar-outline" size={60} color="#007AFF" />
-              <Text style={styles.placeholderText}>
-                No attendance records found for your children
-              </Text>
-            </View>
-          </View>
-        )}
-      </View>
-    </View>
-  );
+      // Step 1: Get teacher record
+      const { data: teacherRecord, error: teacherError } = await supabase
+        .from("teachers")
+        .select("id")
+        .eq("user_id", profile?.user_id)
+        .eq("school_id", profile?.school_id)
+        .single();
 
-  const renderTeacherContent = () => (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="calendar" size={32} color="#fff" />
-        </View>
-        <Text style={styles.title}>Class Attendance</Text>
-        <Text style={styles.subtitle}>
-          Track and manage student attendance for your classes
-        </Text>
-      </View>
+      if (teacherError || !teacherRecord) {
+        console.log("No teacher record found");
+        setLoading(false);
+        return;
+      }
 
-      <View style={styles.content}>
-        {loading ? (
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderText}>Loading class data...</Text>
-          </View>
-        ) : attendanceData.length > 0 ? (
-          attendanceData.map((classData: any, index: number) => (
-            <View key={index} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Ionicons name="school-outline" size={24} color="#007AFF" />
-                <Text style={styles.cardTitle}>{classData.class_name}</Text>
-              </View>
-              <Text style={styles.cardDescription}>
-                Subject: {classData.subject}
-              </Text>
-              <Text style={styles.cardDescription}>
-                Students: {classData.student_count}
-              </Text>
-              <View style={styles.actionButton}>
-                <Text style={styles.buttonText}>Take Attendance</Text>
-              </View>
-            </View>
-          ))
-        ) : (
-          <View style={styles.card}>
-            <View style={styles.placeholderContainer}>
-              <Ionicons name="school-outline" size={60} color="#007AFF" />
-              <Text style={styles.placeholderText}>
-                You don{`'`}t have any classes assigned yet
-              </Text>
-            </View>
-          </View>
-        )}
-      </View>
-    </View>
-  );
+      // Step 2: Get class assignment
+      const { data: assignment, error: assignmentError } = await supabase
+        .from("teacher_assignments")
+        .select(`
+          class_id,
+          classes!teacher_assignments_class_id_fkey!inner (
+            class_id,
+            name
+          )
+        `)
+        .eq("teacher_id", teacherRecord.id)
+        .eq("assignment_type", "class_teacher")
+        .eq("status", "active")
+        .eq("school_id", profile?.school_id)
+        .maybeSingle();
 
-  const renderAdminContent = () => (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="calendar" size={32} color="#fff" />
-        </View>
-        <Text style={styles.title}>Attendance Management</Text>
-        <Text style={styles.subtitle}>Full attendance management system</Text>
-      </View>
+      if (assignmentError) throw assignmentError;
 
-      <View style={styles.content}>
-        {loading ? (
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderText}>
-              Loading attendance statistics...
-            </Text>
-          </View>
-        ) : attendanceData.length > 0 ? (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="bar-chart-outline" size={24} color="#007AFF" />
-              <Text style={styles.cardTitle}>Attendance Statistics</Text>
-            </View>
-            {attendanceData.map((stat: any, index: number) => (
-              <View key={index} style={styles.statRow}>
-                <Text style={styles.statLabel}>{stat.status}:</Text>
-                <Text style={styles.statValue}>{stat.count}</Text>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <View style={styles.placeholderContainer}>
-              <Ionicons name="bar-chart-outline" size={60} color="#007AFF" />
-              <Text style={styles.placeholderText}>
-                No attendance data available
-              </Text>
-            </View>
-          </View>
-        )}
+      if (!assignment) {
+        setLoading(false);
+        return;
+      }
 
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="settings-outline" size={24} color="#007AFF" />
-            <Text style={styles.cardTitle}>Attendance Reports</Text>
-          </View>
-          <Text style={styles.cardDescription}>
-            Generate detailed attendance reports
-          </Text>
-          <View style={styles.actionButton}>
-            <Text style={styles.buttonText}>Generate Report</Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
+      const classData = assignment.classes as any;
+      setClassInfo({
+        id: assignment.class_id,
+        name: classData.name,
+      });
 
-  const renderDefaultContent = () => (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="calendar" size={32} color="#fff" />
-        </View>
-        <Text style={styles.title}>Attendance</Text>
-        <Text style={styles.subtitle}>Track and manage student attendance</Text>
-      </View>
+      // Step 3: Fetch students
+      const { data: enrollments, error: studentsError } = await supabase
+        .from("enrollments")
+        .select(`
+          student_id,
+          students!enrollments_student_id_fkey!inner (
+            id,
+            student_id,
+            first_name,
+            last_name
+          )
+        `)
+        .eq("class_id", assignment.class_id)
+        .eq("status", "active")
+        .eq("school_id", profile?.school_id);
 
-      <View style={styles.content}>
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="calendar-outline" size={24} color="#007AFF" />
-            <Text style={styles.cardTitle}>Today{`'`}s Attendance</Text>
-          </View>
-          <Text style={styles.cardDescription}>
-            Mark attendance for your classes today
-          </Text>
-          <View style={styles.placeholderContainer}>
-            <Ionicons name="calendar-outline" size={60} color="#007AFF" />
-            <Text style={styles.placeholderText}>
-              Attendance tracking feature coming soon
-            </Text>
-          </View>
-        </View>
+      if (studentsError) throw studentsError;
 
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="bar-chart-outline" size={24} color="#007AFF" />
-            <Text style={styles.cardTitle}>Attendance Reports</Text>
-          </View>
-          <Text style={styles.cardDescription}>
-            View attendance reports and analytics
-          </Text>
-          <View style={styles.placeholderContainer}>
-            <Ionicons name="bar-chart-outline" size={60} color="#007AFF" />
-            <Text style={styles.placeholderText}>
-              Attendance reports coming soon
-            </Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
+      // Step 4: Fetch existing attendance for this date
+      const { data: existingAttendance, error: attendanceError } =
+        await supabase
+          .from("attendance")
+          .select("*")
+          .eq("class_id", assignment.class_id)
+          .eq("date", selectedDate)
+          .eq("school_id", profile?.school_id);
 
-  const renderContent = () => {
-    if (isParent) {
-      return renderParentContent();
-    } else if (isTeacher) {
-      return renderTeacherContent();
-    } else if (isAdmin) {
-      return renderAdminContent();
-    } else {
-      return renderDefaultContent();
+      if (attendanceError) throw attendanceError;
+
+      // Create attendance map
+      const attendanceMap = new Map();
+      existingAttendance?.forEach((record: any) => {
+        attendanceMap.set(record.student_id, record);
+      });
+
+      // Combine student and attendance data
+      const studentAttendanceData =
+        enrollments?.map((enrollment: any) => {
+          const student = enrollment.students;
+          const existingRecord = attendanceMap.get(student.id);
+
+          return {
+            student_id: student.id,
+            student_name: `${student.first_name} ${student.last_name}`,
+            student_number: student.student_id,
+            status: existingRecord?.status || "present",
+            notes: existingRecord?.notes || "",
+          };
+        }) || [];
+
+      setStudents(studentAttendanceData);
+    } catch (error) {
+      console.error("Error loading attendance:", error);
+      Alert.alert("Error", "Failed to load attendance data");
+    } finally {
+      setLoading(false);
     }
   };
 
+  const handleStatusChange = (
+    studentId: string,
+    status: "present" | "absent" | "late" | "excused"
+  ) => {
+    setStudents((prev) =>
+      prev.map((student) =>
+        student.student_id === studentId ? { ...student, status } : student
+      )
+    );
+  };
+
+  const handleNotesChange = (studentId: string, notes: string) => {
+    setStudents((prev) =>
+      prev.map((student) =>
+        student.student_id === studentId ? { ...student, notes } : student
+      )
+    );
+  };
+
+  const markAllPresent = () => {
+    setStudents((prev) =>
+      prev.map((student) => ({ ...student, status: "present" }))
+    );
+  };
+
+  const handleSaveAttendance = async () => {
+    try {
+      setSaving(true);
+
+      const attendanceRecords = students.map((student) => ({
+        school_id: profile?.school_id,
+        student_id: student.student_id,
+        class_id: classInfo.id,
+        date: selectedDate,
+        status: student.status,
+        notes: student.notes || null,
+        marked_by: user?.id,
+      }));
+
+      // Delete existing records
+      const { error: deleteError } = await supabase
+        .from("attendance")
+        .delete()
+        .eq("school_id", profile?.school_id)
+        .eq("date", selectedDate)
+        .eq("class_id", classInfo.id);
+
+      if (deleteError) throw deleteError;
+
+      // Insert new records
+      if (attendanceRecords.length > 0) {
+        const { error: insertError } = await supabase
+          .from("attendance")
+          .insert(attendanceRecords);
+
+        if (insertError) throw insertError;
+      }
+
+      Alert.alert("Success", "Attendance saved successfully");
+    } catch (error) {
+      console.error("Error saving attendance:", error);
+      Alert.alert("Error", "Failed to save attendance");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getStatusStats = () => {
+    const present = students.filter((s) => s.status === "present").length;
+    const absent = students.filter((s) => s.status === "absent").length;
+    const late = students.filter((s) => s.status === "late").length;
+    const excused = students.filter((s) => s.status === "excused").length;
+    return { present, absent, late, excused, total: students.length };
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "present":
+        return "#28a745";
+      case "absent":
+        return "#dc3545";
+      case "late":
+        return "#ffc107";
+      case "excused":
+        return "#6c757d";
+      default:
+        return colors.primary;
+    }
+  };
+
+  const stats = getStatusStats();
+
+  if (!isTeacher && !isParent) {
+    return (
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
+        <View style={styles.emptyContainer}>
+          <Ionicons
+            name="calendar-outline"
+            size={60}
+            color={colors.primary}
+          />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            Attendance view is not available for your role.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loading) {
+    return (
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.text }]}>
+            Loading attendance...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isTeacher && !classInfo) {
+    return (
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
+        <View style={styles.emptyContainer}>
+          <Ionicons name="school-outline" size={60} color={colors.primary} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            You don't have a class assignment yet
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isParent && students.length === 0) {
+    return (
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
+        <View style={styles.emptyContainer}>
+          <Ionicons name="people-outline" size={60} color={colors.primary} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            No students linked to your account.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {renderContent()}
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: colors.background }]}
+    >
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: colors.card,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <View>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
+            {isTeacher ? "Take Attendance" : "My Children's Attendance"}
+          </Text>
+          <Text style={[styles.headerSubtitle, { color: colors.placeholderText }]}>
+            {isTeacher ? classInfo.name : "View attendance records"}
+          </Text>
+        </View>
+        {isTeacher && (
+          <TouchableOpacity
+            onPress={markAllPresent}
+            style={[styles.markAllButton, { backgroundColor: colors.primary }]}
+          >
+            <Text style={styles.markAllText}>All Present</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Date Selector */}
+      <View
+        style={[
+          styles.dateContainer,
+          {
+            backgroundColor: colors.card,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.dateInputWrapper,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={20}
+            color={colors.placeholderText}
+          />
+          <TextInput
+            style={[styles.dateInput, { color: colors.text }]}
+            value={selectedDate}
+            onChangeText={setSelectedDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.placeholderText}
+          />
+        </View>
+        <Text style={[styles.dateHelper, { color: colors.placeholderText }]}>
+          {selectedDate === new Date().toISOString().split("T")[0]
+            ? "Today"
+            : "Past Date"}
+        </Text>
+      </View>
+
+      {/* Stats - Only show for teachers */}
+      {isTeacher && (
+        <View style={styles.statsContainer}>
+          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.statValue, { color: colors.text }]}>
+              {stats.total}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+              Total
+            </Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.statValue, { color: "#28a745" }]}>
+              {stats.present}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+              Present
+            </Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.statValue, { color: "#dc3545" }]}>
+              {stats.absent}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+              Absent
+            </Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.statValue, { color: "#ffc107" }]}>
+              {stats.late}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+              Late
+            </Text>
+          </View>
+        </View>
+      )}
+
+      <ScrollView style={styles.scrollView}>
+        {students.map((student: any) => (
+          <View
+            key={student.student_id}
+            style={[styles.studentCard, { backgroundColor: colors.card }]}
+          >
+            <View style={styles.studentHeader}>
+              <View>
+                <Text style={[styles.studentName, { color: colors.text }]}>
+                  {student.student_name}
+                </Text>
+                <Text
+                  style={[
+                    styles.studentNumber,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  {student.student_number}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.statusBadge,
+                  {
+                    backgroundColor:
+                      (student.is_marked === false && isParent
+                        ? colors.border
+                        : getStatusColor(student.status)) + "20",
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusText,
+                    {
+                      color:
+                        student.is_marked === false && isParent
+                          ? colors.placeholderText
+                          : getStatusColor(student.status),
+                    },
+                  ]}
+                >
+                  {isParent && student.is_marked === false
+                    ? "NOT MARKED"
+                    : student.status.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+
+            {isTeacher ? (
+              // Teacher Controls
+              <>
+                <View style={styles.statusButtons}>
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                      student.status === "present" && styles.statusButtonActive,
+                      student.status === "present" && {
+                        backgroundColor: "#28a745",
+                      },
+                    ]}
+                    onPress={() =>
+                      handleStatusChange(student.student_id, "present")
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        { color: colors.placeholderText },
+                        student.status === "present" &&
+                          styles.statusButtonTextActive,
+                      ]}
+                    >
+                      P
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                      student.status === "absent" && styles.statusButtonActive,
+                      student.status === "absent" && {
+                        backgroundColor: "#dc3545",
+                      },
+                    ]}
+                    onPress={() =>
+                      handleStatusChange(student.student_id, "absent")
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        { color: colors.placeholderText },
+                        student.status === "absent" &&
+                          styles.statusButtonTextActive,
+                      ]}
+                    >
+                      A
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                      student.status === "late" && styles.statusButtonActive,
+                      student.status === "late" && {
+                        backgroundColor: "#ffc107",
+                      },
+                    ]}
+                    onPress={() =>
+                      handleStatusChange(student.student_id, "late")
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        { color: colors.placeholderText },
+                        student.status === "late" &&
+                          styles.statusButtonTextActive,
+                      ]}
+                    >
+                      L
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                      student.status === "excused" && styles.statusButtonActive,
+                      student.status === "excused" && {
+                        backgroundColor: "#6c757d",
+                      },
+                    ]}
+                    onPress={() =>
+                      handleStatusChange(student.student_id, "excused")
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        { color: colors.placeholderText },
+                        student.status === "excused" &&
+                          styles.statusButtonTextActive,
+                      ]}
+                    >
+                      E
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  style={[
+                    styles.notesInput,
+                    {
+                      backgroundColor: colors.inputBackground,
+                      borderColor: colors.border,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder="Add notes..."
+                  placeholderTextColor={colors.placeholderText}
+                  value={student.notes || ""}
+                  onChangeText={(text) =>
+                    handleNotesChange(student.student_id, text)
+                  }
+                  multiline
+                />
+              </>
+            ) : (
+              // Parent View (Read Only)
+              <View>
+                {student.notes ? (
+                  <Text style={[styles.notesText, { color: colors.text }]}>
+                    Notes: {student.notes}
+                  </Text>
+                ) : null}
+              </View>
+            )}
+          </View>
+        ))}
       </ScrollView>
+
+      {isTeacher && (
+        <View
+          style={[
+            styles.footer,
+            {
+              backgroundColor: colors.card,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.saveButton,
+              { backgroundColor: colors.primary },
+              saving && styles.saveButtonDisabled,
+            ]}
+            onPress={handleSaveAttendance}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <>
+                <Ionicons name="save" size={20} color="white" />
+                <Text style={styles.saveButtonText}>Save Attendance</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -357,144 +725,185 @@ export default function AttendanceScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
   },
-  container: {
+  loadingContainer: {
     flex: 1,
-    padding: 20,
-  },
-  header: {
-    alignItems: "center",
-    marginBottom: 30,
-    paddingTop: 20,
-  },
-  iconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#007AFF",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 15,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#333",
+  loadingText: {
     marginTop: 10,
-  },
-  subtitle: {
     fontSize: 16,
-    color: "#666",
-    marginTop: 5,
-    textAlign: "center",
-    marginBottom: 20,
   },
-  content: {
+  emptyContainer: {
     flex: 1,
-  },
-  card: {
-    backgroundColor: "white",
-    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
-    marginBottom: 20,
+  },
+  emptyText: {
+    marginTop: 16,
+    fontSize: 16,
+    textAlign: "center",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    marginTop: 4,
+  },
+  markAllButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  markAllText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  dateContainer: {
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  dateInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
+  dateInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+  },
+  dateHelper: {
+    fontSize: 12,
+    marginTop: 8,
+  },
+  statsContainer: {
+    flexDirection: "row",
+    padding: 16,
+    gap: 8,
+  },
+  statCard: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 15,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#333",
-    marginLeft: 10,
-  },
-  cardDescription: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  placeholderContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 30,
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: "#999",
-    marginTop: 15,
-    textAlign: "center",
-    lineHeight: 22,
-  },
-  attendanceRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  attendanceDate: {
-    fontSize: 14,
-    color: "#666",
-  },
-  attendanceStatus: {
-    fontSize: 14,
-    fontWeight: "600",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-  },
-  present: {
-    backgroundColor: "#e8f5e9",
-    color: "#4caf50",
-  },
-  absent: {
-    backgroundColor: "#ffebee",
-    color: "#f44336",
-  },
-  late: {
-    backgroundColor: "#fff3e0",
-    color: "#ff9800",
-  },
-  attendanceRemark: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 5,
-  },
-  statRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+  statValue: {
+    fontSize: 28,
+    fontWeight: "bold",
   },
   statLabel: {
-    fontSize: 16,
-    color: "#666",
+    fontSize: 12,
+    marginTop: 4,
   },
-  statValue: {
-    fontSize: 16,
+  scrollView: {
+    flex: 1,
+    padding: 16,
+  },
+  studentCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  studentHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  studentName: {
+    fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
-  actionButton: {
-    backgroundColor: "#007AFF",
-    borderRadius: 8,
-    paddingVertical: 12,
+  studentNumber: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  statusButtons: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  statusButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 2,
     alignItems: "center",
-    marginTop: 15,
   },
-  buttonText: {
-    color: "white",
+  statusButtonActive: {
+    borderColor: "transparent",
+  },
+  statusButtonText: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "700",
+  },
+  statusButtonTextActive: {
+    color: "white",
+  },
+  notesInput: {
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    minHeight: 44,
+    borderWidth: 1,
+  },
+  notesText: {
+    fontSize: 14,
+    fontStyle: "italic",
+  },
+  footer: {
+    padding: 16,
+    borderTopWidth: 1,
+  },
+  saveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "700",
   },
 });

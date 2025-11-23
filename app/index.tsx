@@ -153,5 +153,19 @@ export default function Splash() {
   }
 
   // Redirect after splash
-  return user ? <Redirect href="/(tabs)" /> : <Redirect href="/(auth)/login" />;
+  if (user) {
+    const { hasRole } = useAuth();
+    if (hasRole("teacher")) {
+      return <Redirect href="/teacher" />;
+    }
+    if (hasRole("parent")) {
+      return <Redirect href="/parent" />;
+    }
+    if (hasRole("admin") || hasRole("superadmin")) {
+      return <Redirect href="/users" />;
+    }
+    return <Redirect href="/chats" />;
+  }
+
+  return <Redirect href="/(auth)/login" />;
 }

@@ -1,16 +1,20 @@
+
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
+import { getThemeColors } from "../themes";
 
 interface Student {
   id: string;
@@ -38,6 +42,9 @@ interface SubjectAverage {
 
 export default function ParentAssessmentHistory() {
   const { user, profile } = useAuth();
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
@@ -189,14 +196,16 @@ export default function ParentAssessmentHistory() {
     <TouchableOpacity
       style={[
         styles.studentItem,
-        selectedStudent === item.id && styles.selectedStudent,
+        { backgroundColor: colors.card, borderColor: colors.border },
+        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
       <Text
         style={[
           styles.studentName,
-          selectedStudent === item.id && styles.selectedStudentName,
+          { color: colors.text },
+          selectedStudent === item.id && { color: "#fff" },
         ]}
       >
         {item.first_name} {item.last_name}
@@ -205,13 +214,13 @@ export default function ParentAssessmentHistory() {
   );
 
   const renderAssessment = ({ item }: { item: Assessment }) => (
-    <View style={styles.assessmentItem}>
+    <View style={[styles.assessmentItem, { backgroundColor: colors.card }]}>
       <View style={styles.assessmentHeader}>
-        <Text style={styles.subjectName}>{item.subject}</Text>
+        <Text style={[styles.subjectName, { color: colors.text }]}>{item.subject}</Text>
         <Text style={styles.assessmentType}>{item.type}</Text>
       </View>
       <View style={styles.assessmentDetails}>
-        <Text style={styles.score}>
+        <Text style={[styles.score, { color: colors.placeholderText }]}>
           Score: {item.score}/{item.max_score}
         </Text>
         <Text style={[styles.grade, getGradeStyle(item.grade)]}>
@@ -219,8 +228,8 @@ export default function ParentAssessmentHistory() {
         </Text>
       </View>
       <View style={styles.assessmentFooter}>
-        <Text style={styles.teacher}>By {item.teacher}</Text>
-        <Text style={styles.date}>
+        <Text style={[styles.teacher, { color: colors.placeholderText }]}>By {item.teacher}</Text>
+        <Text style={[styles.date, { color: colors.placeholderText }]}>
           {new Date(item.date).toLocaleDateString()}
         </Text>
       </View>
@@ -228,9 +237,9 @@ export default function ParentAssessmentHistory() {
   );
 
   const renderSubjectAverage = ({ item }: { item: SubjectAverage }) => (
-    <View style={styles.averageItem}>
-      <Text style={styles.subjectAverageName}>{item.subject}</Text>
-      <Text style={styles.averageValue}>{item.average}%</Text>
+    <View style={[styles.averageItem, { backgroundColor: colors.card }]}>
+      <Text style={[styles.subjectAverageName, { color: colors.text }]}>{item.subject}</Text>
+      <Text style={[styles.averageValue, { color: colors.primary }]}>{item.average}%</Text>
       <Text style={[styles.averageGrade, getGradeStyle(item.grade)]}>
         {item.grade}
       </Text>
@@ -246,30 +255,31 @@ export default function ParentAssessmentHistory() {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <Text>Loading assessment history...</Text>
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ marginTop: 10, color: colors.text }}>Loading assessment history...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Assessment History</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.header, { color: colors.text }]}>Assessment History</Text>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="clipboard-outline" size={60} color="#ccc" />
-          <Text style={styles.emptyText}>
+          <Ionicons name="clipboard-outline" size={60} color={colors.placeholderText} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
             No students linked to your account
           </Text>
-          <Text style={styles.emptySubtext}>
+          <Text style={[styles.emptySubtext, { color: colors.placeholderText }]}>
             Contact school administration to link your children
           </Text>
         </View>
       ) : (
-        <ScrollView>
+        <ScrollView showsVerticalScrollIndicator={false}>
           <View style={styles.studentSelector}>
-            <Text style={styles.selectorLabel}>Select Student:</Text>
+            <Text style={[styles.selectorLabel, { color: colors.text }]}>Select Student:</Text>
             <FlatList
               data={students}
               horizontal
@@ -279,18 +289,19 @@ export default function ParentAssessmentHistory() {
             />
           </View>
 
-          <View style={styles.timeRangeSelector}>
+          <View style={[styles.timeRangeSelector, { backgroundColor: isDarkMode ? colors.card : "#e9ecef" }]}>
             <TouchableOpacity
               style={[
                 styles.timeButton,
-                timeRange === "term" && styles.activeTimeButton,
+                timeRange === "term" && { backgroundColor: colors.background },
               ]}
               onPress={() => setTimeRange("term")}
             >
               <Text
                 style={[
                   styles.timeButtonText,
-                  timeRange === "term" && styles.activeTimeButtonText,
+                  { color: colors.placeholderText },
+                  timeRange === "term" && { color: colors.primary, fontWeight: "600" },
                 ]}
               >
                 This Term
@@ -299,14 +310,15 @@ export default function ParentAssessmentHistory() {
             <TouchableOpacity
               style={[
                 styles.timeButton,
-                timeRange === "session" && styles.activeTimeButton,
+                timeRange === "session" && { backgroundColor: colors.background },
               ]}
               onPress={() => setTimeRange("session")}
             >
               <Text
                 style={[
                   styles.timeButtonText,
-                  timeRange === "session" && styles.activeTimeButtonText,
+                  { color: colors.placeholderText },
+                  timeRange === "session" && { color: colors.primary, fontWeight: "600" },
                 ]}
               >
                 This Session
@@ -316,7 +328,7 @@ export default function ParentAssessmentHistory() {
 
           {subjectAverages.length > 0 && (
             <View style={styles.averagesSection}>
-              <Text style={styles.sectionTitle}>Subject Averages</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Subject Averages</Text>
               <FlatList
                 data={subjectAverages}
                 keyExtractor={(item) => item.subject}
@@ -329,11 +341,12 @@ export default function ParentAssessmentHistory() {
 
           {assessments.length > 0 ? (
             <View style={styles.assessmentsSection}>
-              <Text style={styles.sectionTitle}>Recent Assessments</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Assessments</Text>
               <FlatList
                 data={assessments}
                 keyExtractor={(item) => item.id}
                 renderItem={renderAssessment}
+                scrollEnabled={false}
               />
             </View>
           ) : (
@@ -341,9 +354,9 @@ export default function ParentAssessmentHistory() {
               <Ionicons
                 name="information-circle-outline"
                 size={40}
-                color="#007AFF"
+                color={colors.primary}
               />
-              <Text style={styles.noAssessmentsText}>
+              <Text style={[styles.noAssessmentsText, { color: colors.placeholderText }]}>
                 No assessment records found for this student
               </Text>
             </View>
@@ -357,13 +370,11 @@ export default function ParentAssessmentHistory() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
     padding: 16,
   },
   header: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 20,
   },
   studentSelector: {
@@ -372,33 +383,21 @@ const styles = StyleSheet.create({
   selectorLabel: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 10,
   },
   studentItem: {
-    backgroundColor: "white",
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-  },
-  selectedStudent: {
-    backgroundColor: "#007AFF",
-    borderColor: "#007AFF",
   },
   studentName: {
     fontSize: 14,
-    color: "#333",
-  },
-  selectedStudentName: {
-    color: "white",
   },
   timeRangeSelector: {
     flexDirection: "row",
     marginBottom: 20,
-    backgroundColor: "#e9ecef",
     borderRadius: 20,
     padding: 4,
   },
@@ -409,7 +408,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   activeTimeButton: {
-    backgroundColor: "white",
     elevation: 2,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -418,11 +416,9 @@ const styles = StyleSheet.create({
   },
   timeButtonText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   activeTimeButtonText: {
-    color: "#007AFF",
     fontWeight: "600",
   },
   averagesSection: {
@@ -431,11 +427,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 12,
   },
   averageItem: {
-    backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
     marginRight: 12,
@@ -450,13 +444,11 @@ const styles = StyleSheet.create({
   subjectAverageName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   averageValue: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#007AFF",
     marginBottom: 4,
   },
   averageGrade: {
@@ -486,7 +478,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   assessmentItem: {
-    backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -504,7 +495,6 @@ const styles = StyleSheet.create({
   subjectName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   assessmentType: {
     fontSize: 12,
@@ -521,7 +511,6 @@ const styles = StyleSheet.create({
   },
   score: {
     fontSize: 14,
-    color: "#666",
   },
   grade: {
     fontSize: 14,
@@ -536,11 +525,9 @@ const styles = StyleSheet.create({
   },
   teacher: {
     fontSize: 12,
-    color: "#999",
   },
   date: {
     fontSize: 12,
-    color: "#999",
   },
   emptyContainer: {
     flex: 1,
@@ -551,13 +538,11 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   noAssessmentsContainer: {
@@ -568,7 +553,6 @@ const styles = StyleSheet.create({
   },
   noAssessmentsText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 16,
   },

@@ -1,13 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import ParentAssessmentHistory from "../../components/ParentAssessmentHistory";
+import ParentAttendance from "../../components/ParentAttendance";
 import ParentDashboard from "../../components/ParentDashboard";
 import ParentTransport from "../../components/ParentTransport";
+import { useTheme } from "../../contexts/ThemeContext";
+import { getThemeColors } from "../../themes";
 
 export default function ParentScreen() {
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "transport" | "assessment"
+    "dashboard" | "transport" | "assessment" | "attendance"
   >("dashboard");
 
   const renderContent = () => {
@@ -18,140 +23,115 @@ export default function ParentScreen() {
         return <ParentTransport />;
       case "assessment":
         return <ParentAssessmentHistory />;
+      case "attendance":
+        return <ParentAttendance />;
       default:
         return <ParentDashboard />;
     }
   };
 
+  const tabs = [
+    { id: "dashboard", label: "Dashboard", icon: "home" },
+    { id: "transport", label: "Transport", icon: "bus" },
+    { id: "assessment", label: "Assessment", icon: "clipboard" },
+    { id: "attendance", label: "Attendance", icon: "calendar" },
+  ];
+
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Children</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>My Children</Text>
       </View>
 
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "dashboard" && styles.activeTab]}
-          onPress={() => setActiveTab("dashboard")}
-          activeOpacity={0.7}
+      <View style={styles.tabWrapper}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          style={[styles.tabContainer, { backgroundColor: isDarkMode ? colors.card : "#f0f0f0" }]}
+          contentContainerStyle={styles.tabContentContainer}
         >
-          <View style={styles.tabIconContainer}>
-            <Ionicons
-              name="home"
-              size={20}
-              color={activeTab === "dashboard" ? "#fff" : "#666"}
-            />
-          </View>
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "dashboard" && styles.activeTabText,
-            ]}
-          >
-            Dashboard
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "transport" && styles.activeTab]}
-          onPress={() => setActiveTab("transport")}
-          activeOpacity={0.7}
-        >
-          <View style={styles.tabIconContainer}>
-            <Ionicons
-              name="bus"
-              size={20}
-              color={activeTab === "transport" ? "#fff" : "#666"}
-            />
-          </View>
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "transport" && styles.activeTabText,
-            ]}
-          >
-            Transport
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "assessment" && styles.activeTab]}
-          onPress={() => setActiveTab("assessment")}
-          activeOpacity={0.7}
-        >
-          <View style={styles.tabIconContainer}>
-            <Ionicons
-              name="clipboard"
-              size={20}
-              color={activeTab === "assessment" ? "#fff" : "#666"}
-            />
-          </View>
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "assessment" && styles.activeTabText,
-            ]}
-          >
-            Assessment
-          </Text>
-        </TouchableOpacity>
+          {tabs.map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              style={[
+                styles.tab,
+                activeTab === tab.id && {
+                  backgroundColor: colors.background,
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.1,
+                  shadowRadius: 2,
+                  elevation: 2,
+                },
+              ]}
+              onPress={() => setActiveTab(tab.id as any)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={tab.icon as any}
+                size={18}
+                color={activeTab === tab.id ? colors.primary : colors.placeholderText}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === tab.id ? colors.text : colors.placeholderText },
+                  activeTab === tab.id && styles.activeTabText,
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       <View style={styles.content}>{renderContent()}</View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
-    padding: 16,
-    backgroundColor: "#f8f9fa",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  tabWrapper: {
+    paddingVertical: 12,
   },
   tabContainer: {
-    flexDirection: "row",
-    backgroundColor: "#f8f9fa",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
+    marginHorizontal: 16,
+    borderRadius: 12,
+    padding: 4,
+  },
+  tabContentContainer: {
+    paddingRight: 16,
   },
   tab: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: "#007AFF",
-  },
-  tabIconContainer: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginRight: 8,
   },
   tabText: {
     fontSize: 14,
-    color: "#666",
+    fontWeight: "600",
   },
   activeTabText: {
-    color: "#007AFF",
-    fontWeight: "600",
+    fontWeight: "700",
   },
   content: {
     flex: 1,

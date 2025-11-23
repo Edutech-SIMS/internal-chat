@@ -1,10 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { useEffect } from "react";
 import { EventRegister } from "react-native-event-listeners";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTheme } from "../../contexts/ThemeContext";
+import { getThemeColors } from "../../themes";
 
 export default function TabLayout() {
   const { hasRole, profile, loading } = useAuth();
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
+
+  useEffect(() => {
+    console.log("TabLayout - isDarkMode updated:", isDarkMode);
+    console.log("TabLayout - new colors:", colors);
+  }, [isDarkMode]);
+
   const isParent = !loading && profile?.roles ? hasRole("parent") : false;
   const isTeacher = !loading && profile?.roles ? hasRole("teacher") : false;
   const isAdminUser =
@@ -13,9 +24,9 @@ export default function TabLayout() {
       : false;
 
   const tabBarStyle = {
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.card,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
+    borderTopColor: colors.border,
     paddingBottom: 20,
     height: 70,
   };
@@ -30,35 +41,17 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: true,
         headerStyle: {
-          backgroundColor: "#007AFF",
+          backgroundColor: colors.primary,
         },
         headerTintColor: "#ffffff",
         headerTitleStyle: {
           fontWeight: "bold",
         },
-        tabBarActiveTintColor: "#007AFF",
-        tabBarInactiveTintColor: "#8e8e93",
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: isDarkMode ? "#8e8e93" : "#8e8e93",
         tabBarStyle: tabBarStyle,
       }}
     >
-      {/* Chat Tab - Available to all users */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Chats",
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? "chatbubbles" : "chatbubbles-outline"}
-              size={size}
-              color={color}
-            />
-          ),
-        }}
-        listeners={{
-          tabPress: () => EventRegister.emit("refreshChats"),
-        }}
-      />
-
       {/* Parent-specific tabs */}
       <Tabs.Screen
         name="parent"
@@ -91,12 +84,45 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Chat Tab - Available to all users */}
+      <Tabs.Screen
+        name="chats"
+        options={{
+          title: "Chats",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "chatbubbles" : "chatbubbles-outline"}
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+        listeners={{
+          tabPress: () => EventRegister.emit("refreshChats"),
+        }}
+      />
+
+      <Tabs.Screen
+        name="billing"
+        options={{
+          title: "Billing",
+          href: isParent ? "/billing" : null,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "wallet" : "wallet-outline"}
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+
       {/* Shared Attendance tab for parents and teachers */}
       <Tabs.Screen
         name="attendance"
         options={{
           title: "Attendance",
-          href: isParent || isTeacher ? "/attendance" : null,
+          href: isTeacher ? "/attendance" : null,
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
               name={focused ? "calendar" : "calendar-outline"}
@@ -108,10 +134,10 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="students"
+        name="users"
         options={{
           title: "Users",
-          href: isAdminUser ? "/students" : null,
+          href: isAdminUser ? "/users" : null,
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
               name={focused ? "person" : "person-outline"}
@@ -137,14 +163,15 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Profile Tab - Available to all users */}
+      {/* Settings Tab - Available to all users */}
       <Tabs.Screen
-        name="profile"
+        name="settings"
+        
         options={{
-          title: profile?.full_name || "Profile",
+          title: "Settings",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
-              name={focused ? "person-circle" : "person-circle-outline"}
+              name={focused ? "settings" : "settings-outline"}
               size={size}
               color={color}
             />

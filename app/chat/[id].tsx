@@ -2,28 +2,29 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Dimensions,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Dimensions,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import EmojiSelector, { Categories } from "react-native-emoji-selector";
 import { useAuth } from "../../contexts/AuthContext";
-import { canSendMessages } from "../../lib/message-permissions";
+import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
+import { getThemeColors } from "../../themes";
 
 const { width, height } = Dimensions.get("window");
 
@@ -38,6 +39,8 @@ interface Message {
 }
 
 export default function ChatScreen() {
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [infoVisible, setInfoVisible] = useState(false);
@@ -83,10 +86,17 @@ export default function ChatScreen() {
     }
   }, [infoVisible]);
 
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+
   useEffect(() => {
-    fetchMessages();
-    checkMessagePermissions();
-    setupRealtimeSubscription();
+    const initChat = async () => {
+      const group = await fetchGroupInfo();
+      await checkMessagePermissions(group);
+      fetchMessages(true);
+      setupRealtimeSubscription();
+    };
+    initChat();
   }, [chatId]);
 
   const setupRealtimeSubscription = () => {
@@ -99,14 +109,13 @@ export default function ChatScreen() {
           event: "*",
           schema: "public",
           table: "typing_indicators",
-          filter: `school_id=eq.${schoolId}`, // <-- filter typing events by school
+          filter: `group_id=eq.${chatId}`, // Optimized: Filter by group_id directly
         },
 
         (payload) => {
           if (payload.eventType === "INSERT") {
             const newTypingUser = payload.new.user_id;
             if (newTypingUser !== profile?.user_id) {
-              // Use profile.user_id instead of user.id
               setTypingUsers((prev) => new Set(prev).add(newTypingUser));
             }
           } else if (payload.eventType === "DELETE") {
@@ -156,21 +165,29 @@ export default function ChatScreen() {
     }
   };
 
-  const checkMessagePermissions = async () => {
+  const checkMessagePermissions = async (groupData?: any) => {
     if (!user || !profile?.user_id) return;
 
     setCheckingPermission(true);
     try {
-      const hasPermission = await canSendMessages(chatId, profile.user_id); // Use profile.user_id instead of user.id
+      // Optimization: Pass group object if available to avoid re-fetching in canSendMessages if we could modify it,
+      // but canSendMessages signature is (chatId, userId).
+      // We can at least avoid the second fetch for is_announcement below.
+      
+      const hasPermission = await canSendMessages(chatId, profile.user_id);
       setCanSend(hasPermission);
 
-      const { data: group } = await supabase
-        .from("groups")
-        .select("is_announcement")
-        .eq("id", chatId)
-        .single();
-
-      setIsAnnouncementGroup(group?.is_announcement || false);
+      if (groupData) {
+        setIsAnnouncementGroup(groupData.is_announcement);
+      } else {
+        // Fallback if no group data passed (shouldn't happen with new flow)
+        const { data: group } = await supabase
+          .from("groups")
+          .select("is_announcement")
+          .eq("id", chatId)
+          .single();
+        setIsAnnouncementGroup(group?.is_announcement || false);
+      }
     } catch (error) {
       console.error("Error checking permissions:", error);
       setCanSend(false);
@@ -184,49 +201,84 @@ export default function ChatScreen() {
       .from("groups")
       .select("id, name, description, created_at, is_announcement")
       .eq("id", chatId)
-      .eq("school_id", schoolId) // <-- enforce school scoping
+      .eq("school_id", schoolId)
       .single();
+      
     if (error) {
       console.error("Error fetching group info:", error);
+      return null;
     } else {
       setGroupInfo(data);
       setIsAnnouncementGroup(data.is_announcement);
+      return data;
     }
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = async (isInitial = false) => {
     if (!user) return;
-    const { data, error } = await supabase
-      .from("messages")
-      .select(
-        `
-      id,
-      content,
-      created_at,
-      profiles (full_name, email)
-    `
-      )
-      .eq("group_id", chatId)
-      .eq("school_id", schoolId) // <-- enforce school scoping
-      .order("created_at", { ascending: true });
+    
+    if (isInitial) {
+      setMessages([]);
+      setHasMoreMessages(true);
+    }
 
-    if (error) {
-      console.error("Error fetching messages:", error);
-    } else {
-      setMessages(
-        (data || []).map((msg: any) => ({
+    if (!isInitial && !hasMoreMessages) return;
+
+    if (!isInitial) setIsLoadingMore(true);
+
+    try {
+      let query = supabase
+        .from("messages")
+        .select(
+          `
+        id,
+        content,
+        created_at,
+        profiles (full_name, email)
+      `
+        )
+        .eq("group_id", chatId)
+        .eq("school_id", schoolId)
+        .order("created_at", { ascending: false }) // Fetch latest first
+        .limit(50);
+
+      // If loading more, fetch messages older than the oldest one we have
+      if (!isInitial && messages.length > 0) {
+        const oldestMessage = messages[0];
+        query = query.lt("created_at", oldestMessage.created_at);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error("Error fetching messages:", error);
+      } else {
+        const newMessages = (data || []).map((msg: any) => ({
           ...msg,
           profiles: Array.isArray(msg.profiles)
             ? msg.profiles[0]
             : msg.profiles,
-        }))
-      );
-      // Auto scroll to bottom
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+        })).reverse(); // Reverse to chronological order
+
+        if (data.length < 50) {
+          setHasMoreMessages(false);
+        }
+
+        if (isInitial) {
+          setMessages(newMessages);
+          // Auto scroll to bottom on initial load
+          setTimeout(() => {
+            flatListRef.current?.scrollToEnd({ animated: false });
+          }, 100);
+        } else {
+          setMessages((prev) => [...newMessages, ...prev]);
+        }
+      }
+    } finally {
+      setIsLoadingMore(false);
     }
   };
+
 
   const sendMessage = async () => {
     if (!newMessage.trim() || sending) return;
@@ -398,12 +450,19 @@ export default function ChatScreen() {
 
   if (checkingPermission) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
+        <StatusBar
+          barStyle={isDarkMode ? "light-content" : "dark-content"}
+          backgroundColor={colors.background}
+        />
         <View style={styles.loadingContainer}>
           <View style={styles.loadingContent}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loadingText}>Loading chat...</Text>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.text }]}>
+              Loading chat...
+            </Text>
           </View>
         </View>
       </SafeAreaView>
@@ -411,8 +470,13 @@ export default function ChatScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: colors.background }]}
+    >
+      <StatusBar
+        barStyle={isDarkMode ? "light-content" : "dark-content"}
+        backgroundColor={colors.card}
+      />
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -425,6 +489,8 @@ export default function ChatScreen() {
             {
               opacity: fadeAnim,
               transform: [{ translateY: slideAnim }],
+              backgroundColor: colors.card,
+              borderBottomColor: colors.border,
             },
           ]}
         >
@@ -433,11 +499,14 @@ export default function ChatScreen() {
             onPress={() => router.back()}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="arrow-back" size={24} color={colors.primary} />
           </TouchableOpacity>
 
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Text
+              style={[styles.headerTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
               {chatName || "Chat"}
             </Text>
             {isAnnouncementGroup && (
@@ -447,7 +516,7 @@ export default function ChatScreen() {
               </View>
             )}
             {typingUsers.size > 0 && (
-              <Text style={styles.typingText}>
+              <Text style={[styles.typingText, { color: colors.text }]}>
                 {Array.from(typingUsers).length === 1
                   ? "1 person is typing..."
                   : `${Array.from(typingUsers).length} people are typing...`}
@@ -460,30 +529,42 @@ export default function ChatScreen() {
             onPress={() => setInfoVisible(true)}
             activeOpacity={0.7}
           >
-            <Ionicons name="information-circle" size={24} color="#007AFF" />
+            <Ionicons
+              name="information-circle"
+              size={24}
+              color={colors.primary}
+            />
           </TouchableOpacity>
         </Animated.View>
 
         {/* Messages List */}
         <Animated.View
           style={[
-            styles.messagesContainer,
+            styles.messageContainer,
             {
               opacity: fadeAnim,
+              backgroundColor: colors.background,
             },
           ]}
         >
           {messages.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <View style={styles.emptyIconContainer}>
+              <View
+                style={[
+                  styles.emptyIconContainer,
+                  { backgroundColor: colors.card },
+                ]}
+              >
                 <Ionicons
                   name="chatbubble-ellipses-outline"
                   size={80}
-                  color="#E5E5E7"
+                  color={isDarkMode ? "#444444" : "#E5E5E7"}
                 />
               </View>
-              <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptySubtitle}>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                No messages yet
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: colors.text }]}>
                 {canSend
                   ? "Start the conversation with a friendly message!"
                   : isAnnouncementGroup
@@ -514,10 +595,17 @@ export default function ChatScreen() {
               {
                 opacity: fadeAnim,
                 transform: [{ translateY: slideAnim }],
+                backgroundColor: colors.card,
+                borderTopColor: colors.border,
               },
             ]}
           >
-            <View style={styles.inputWrapper}>
+            <View
+              style={[
+                styles.inputWrapper,
+                { backgroundColor: colors.inputBackground },
+              ]}
+            >
               <TouchableOpacity
                 style={styles.emojiButton}
                 onPress={() => {
@@ -533,7 +621,7 @@ export default function ChatScreen() {
                 <Ionicons
                   name={showEmojiPicker ? "keypad-outline" : "happy-outline"}
                   size={24}
-                  color="#8E8E93"
+                  color={colors.text}
                 />
               </TouchableOpacity>
 
@@ -545,9 +633,14 @@ export default function ChatScreen() {
                   handleTyping(text.length > 0);
                 }}
                 placeholder="Type a message..."
-                placeholderTextColor="#8E8E93"
+                placeholderTextColor={colors.placeholderText}
                 style={[
                   styles.textInput,
+                  {
+                    backgroundColor: colors.inputBackground,
+                    color: colors.text,
+                    borderColor: colors.border,
+                  },
                   !newMessage && { textAlignVertical: "center" },
                 ]}
                 multiline
@@ -561,18 +654,26 @@ export default function ChatScreen() {
                   newMessage.trim() && !sending
                     ? styles.sendButtonActive
                     : styles.sendButtonInactive,
+                  {
+                    backgroundColor:
+                      newMessage.trim() && !sending
+                        ? colors.primary
+                        : "transparent",
+                  },
                 ]}
                 disabled={!newMessage.trim() || sending}
                 activeOpacity={0.8}
               >
                 {sending ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <ActivityIndicator size="small" color={colors.text} />
                 ) : (
                   <Ionicons
                     name="send"
                     size={20}
                     color={
-                      newMessage.trim() && !sending ? "#FFFFFF" : "#8E8E93"
+                      newMessage.trim() && !sending
+                        ? colors.text
+                        : colors.placeholderText
                     }
                   />
                 )}
@@ -581,7 +682,12 @@ export default function ChatScreen() {
 
             {/* Emoji Picker */}
             {showEmojiPicker && (
-              <View style={styles.emojiPickerContainer}>
+              <View
+                style={[
+                  styles.emojiPickerContainer,
+                  { borderTopColor: colors.border },
+                ]}
+              >
                 <EmojiSelector
                   onEmojiSelected={handleEmojiSelect}
                   category={Categories.all}
@@ -603,13 +709,17 @@ export default function ChatScreen() {
               styles.permissionNotice,
               {
                 opacity: fadeAnim,
+                backgroundColor: isDarkMode ? "#3a1a12" : "#FFF4F2",
+                borderTopColor: colors.border,
               },
             ]}
           >
-            <View style={styles.permissionIcon}>
+            <View
+              style={[styles.permissionIcon, { backgroundColor: colors.card }]}
+            >
               <Ionicons name="megaphone" size={18} color="#FF6B35" />
             </View>
-            <Text style={styles.permissionText}>
+            <Text style={[styles.permissionText, { color: "#FF6B35" }]}>
               This is an announcement group. Only authorized users can send
               messages.
             </Text>
@@ -623,8 +733,19 @@ export default function ChatScreen() {
           transparent={true}
           onRequestClose={() => setInfoVisible(false)}
         >
-          <SafeAreaView style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
+          <SafeAreaView
+            style={[
+              styles.modalOverlay,
+              {
+                backgroundColor: isDarkMode
+                  ? "rgba(0, 0, 0, 0.8)"
+                  : "rgba(0, 0, 0, 0.4)",
+              },
+            ]}
+          >
+            <View
+              style={[styles.modalContainer, { backgroundColor: colors.card }]}
+            >
               <View style={styles.modalHandle} />
 
               <View style={styles.modalHeader}>
@@ -632,15 +753,17 @@ export default function ChatScreen() {
                   <Ionicons
                     name="information-circle"
                     size={24}
-                    color="#007AFF"
+                    color={colors.primary}
                   />
-                  <Text style={styles.modalTitle}>Group Info</Text>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>
+                    Group Info
+                  </Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => setInfoVisible(false)}
                   style={styles.modalCloseButton}
                 >
-                  <Ionicons name="close" size={24} color="#8E8E93" />
+                  <Ionicons name="close" size={24} color={colors.text} />
                 </TouchableOpacity>
               </View>
 
@@ -651,22 +774,64 @@ export default function ChatScreen() {
               >
                 {groupInfo ? (
                   <>
-                    <View style={styles.infoCard}>
-                      <Text style={styles.infoItemTitle}>Group Name</Text>
-                      <Text style={styles.infoItemValue}>{groupInfo.name}</Text>
+                    <View
+                      style={[
+                        styles.infoCard,
+                        { backgroundColor: colors.background },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.infoItemTitle,
+                          { color: colors.placeholderText },
+                        ]}
+                      >
+                        Group Name
+                      </Text>
+                      <Text
+                        style={[styles.infoItemValue, { color: colors.text }]}
+                      >
+                        {groupInfo.name}
+                      </Text>
                     </View>
 
                     {groupInfo.description && (
-                      <View style={styles.infoCard}>
-                        <Text style={styles.infoItemTitle}>Description</Text>
-                        <Text style={styles.infoItemValue}>
+                      <View
+                        style={[
+                          styles.infoCard,
+                          { backgroundColor: colors.background },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.infoItemTitle,
+                            { color: colors.placeholderText },
+                          ]}
+                        >
+                          Description
+                        </Text>
+                        <Text
+                          style={[styles.infoItemValue, { color: colors.text }]}
+                        >
                           {groupInfo.description}
                         </Text>
                       </View>
                     )}
 
-                    <View style={styles.infoCard}>
-                      <Text style={styles.infoItemTitle}>Type</Text>
+                    <View
+                      style={[
+                        styles.infoCard,
+                        { backgroundColor: colors.background },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.infoItemTitle,
+                          { color: colors.placeholderText },
+                        ]}
+                      >
+                        Type
+                      </Text>
                       <View style={styles.typeContainer}>
                         <Ionicons
                           name={
@@ -676,10 +841,14 @@ export default function ChatScreen() {
                           }
                           size={16}
                           color={
-                            groupInfo.is_announcement ? "#FF6B35" : "#007AFF"
+                            groupInfo.is_announcement
+                              ? "#FF6B35"
+                              : colors.primary
                           }
                         />
-                        <Text style={styles.infoItemValue}>
+                        <Text
+                          style={[styles.infoItemValue, { color: colors.text }]}
+                        >
                           {groupInfo.is_announcement
                             ? "Announcements"
                             : "Public chat"}
@@ -687,9 +856,23 @@ export default function ChatScreen() {
                       </View>
                     </View>
 
-                    <View style={styles.infoCard}>
-                      <Text style={styles.infoItemTitle}>Created</Text>
-                      <Text style={styles.infoItemValue}>
+                    <View
+                      style={[
+                        styles.infoCard,
+                        { backgroundColor: colors.background },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.infoItemTitle,
+                          { color: colors.placeholderText },
+                        ]}
+                      >
+                        Created
+                      </Text>
+                      <Text
+                        style={[styles.infoItemValue, { color: colors.text }]}
+                      >
                         {new Date(groupInfo.created_at).toLocaleDateString()}
                       </Text>
                     </View>
@@ -709,8 +892,10 @@ export default function ChatScreen() {
                   </>
                 ) : (
                   <View style={styles.modalLoading}>
-                    <ActivityIndicator size="small" color="#007AFF" />
-                    <Text style={styles.modalLoadingText}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text
+                      style={[styles.modalLoadingText, { color: colors.text }]}
+                    >
                       Loading group info...
                     </Text>
                   </View>
@@ -718,7 +903,10 @@ export default function ChatScreen() {
               </ScrollView>
 
               <TouchableOpacity
-                style={styles.modalCloseButtonLarge}
+                style={[
+                  styles.modalCloseButtonLarge,
+                  { backgroundColor: colors.primary },
+                ]}
                 onPress={() => setInfoVisible(false)}
               >
                 <Text style={styles.modalCloseButtonText}>Close</Text>
@@ -734,17 +922,14 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
   },
   container: {
     flex: 1,
-    backgroundColor: "#F2F2F7",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F2F2F7",
   },
   loadingContent: {
     alignItems: "center",
@@ -753,23 +938,13 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#8E8E93",
     fontWeight: "500",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#E5E5E7",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    padding: 16,
+    borderBottomWidth: 1,
   },
   backButton: {
     padding: 8,
@@ -781,9 +956,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: "600",
-    color: "#000",
+    flex: 1,
+    marginLeft: 12,
   },
   announcementBadge: {
     flexDirection: "row",
@@ -802,7 +978,6 @@ const styles = StyleSheet.create({
   },
   typingText: {
     fontSize: 12,
-    color: "#8E8E93",
     fontStyle: "italic",
     marginTop: 2,
   },
@@ -810,8 +985,9 @@ const styles = StyleSheet.create({
     padding: 8,
     marginRight: -8,
   },
-  messagesContainer: {
+  messageContainer: {
     flex: 1,
+    padding: 16,
   },
   emptyContainer: {
     flex: 1,
@@ -823,7 +999,6 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 24,
@@ -836,12 +1011,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#1C1C1E",
     marginBottom: 8,
   },
   emptySubtitle: {
     fontSize: 15,
-    color: "#8E8E93",
     textAlign: "center",
     lineHeight: 20,
     maxWidth: 280,
@@ -893,7 +1066,6 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 16,
-    lineHeight: 20,
   },
   myMessageText: {
     color: "#FFFFFF",
@@ -913,16 +1085,14 @@ const styles = StyleSheet.create({
     color: "#8E8E93",
   },
   inputContainer: {
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: "#E5E5E7",
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 10,
+    borderTopWidth: 1,
   },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F2F2F7",
     borderRadius: 20,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -934,25 +1104,18 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    fontSize: 16,
-    color: "#1C1C1E",
-    maxHeight: 100,
-    paddingVertical: 0,
-    paddingHorizontal: 8,
-    textAlignVertical: "center",
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 10,
   },
 
   sendButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
+    borderRadius: 20,
+    padding: 10,
   },
-  sendButtonActive: {
-    backgroundColor: "#007AFF",
-  },
+  sendButtonActive: {},
   sendButtonInactive: {
     backgroundColor: "transparent",
   },
@@ -960,22 +1123,18 @@ const styles = StyleSheet.create({
     height: 250,
     marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: "#E5E5E7",
   },
   permissionNotice: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: "#FFF4F2",
     borderTopWidth: 0.5,
-    borderTopColor: "#E5E5E7",
   },
   permissionIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -983,16 +1142,13 @@ const styles = StyleSheet.create({
   permissionText: {
     flex: 1,
     fontSize: 14,
-    color: "#FF6B35",
     fontWeight: "500",
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
     justifyContent: "flex-end",
   },
   modalContainer: {
-    backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
@@ -1003,11 +1159,11 @@ const styles = StyleSheet.create({
   modalHandle: {
     width: 36,
     height: 4,
-    backgroundColor: "#E5E5E7",
     borderRadius: 2,
     alignSelf: "center",
     marginTop: 8,
     marginBottom: 20,
+    backgroundColor: "#E5E5E7",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1022,7 +1178,6 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#1C1C1E",
     marginLeft: 8,
   },
   modalCloseButton: {
@@ -1032,7 +1187,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   infoCard: {
-    backgroundColor: "#F2F2F7",
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
@@ -1040,14 +1194,12 @@ const styles = StyleSheet.create({
   infoItemTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#8E8E93",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   infoItemValue: {
     fontSize: 16,
-    color: "#1C1C1E",
     fontWeight: "500",
   },
   typeContainer: {
@@ -1065,9 +1217,9 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     fontSize: 14,
-    color: "#FF6B35",
     fontWeight: "500",
     marginLeft: 8,
+    color: "#FF6B35",
   },
   modalLoading: {
     flexDirection: "row",
@@ -1077,11 +1229,9 @@ const styles = StyleSheet.create({
   },
   modalLoadingText: {
     fontSize: 16,
-    color: "#8E8E93",
     marginLeft: 12,
   },
   modalCloseButtonLarge: {
-    backgroundColor: "#007AFF",
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",

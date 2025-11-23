@@ -1,15 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
+import { getThemeColors } from "../themes";
 
 interface Student {
   id: string;
@@ -30,6 +33,9 @@ interface TransportInfo {
 
 export default function ParentTransport() {
   const { user, profile } = useAuth();
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [transportInfo, setTransportInfo] = useState<TransportInfo | null>(
@@ -97,24 +103,26 @@ export default function ParentTransport() {
           dropoff_route_id,
           pickup_description,
           dropoff_description,
-          transport_routes!pickup_route_id(name),
-          transport_routes!dropoff_route_id(name)
+          pickup_route:transport_routes!pickup_route_id(name),
+          dropoff_route:transport_routes!dropoff_route_id(name)
         `
         )
         .eq("student_id", studentId)
         .eq("school_id", profile?.school_id)
-        .single();
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
       if (error) throw error;
 
       if (transportData) {
         // Transform the data to match our TransportInfo interface
+        const pickupRoute = transportData.pickup_route as any;
+        const dropoffRoute = transportData.dropoff_route as any;
+        
         const transportInfo: TransportInfo = {
           route_name:
-            transportData.transport_routes &&
-            transportData.transport_routes.length > 0
-              ? transportData.transport_routes[0].name
-              : "No Route Assigned",
+            pickupRoute?.name || "No Route Assigned",
           driver_name: "Driver information not available", // This would require joining with driver tables
           driver_phone: "Contact information not available",
           vehicle_number: "Vehicle information not available",
@@ -146,14 +154,16 @@ export default function ParentTransport() {
     <TouchableOpacity
       style={[
         styles.studentItem,
-        selectedStudent === item.id && styles.selectedStudent,
+        { backgroundColor: colors.card, borderColor: colors.border },
+        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
       <Text
         style={[
           styles.studentName,
-          selectedStudent === item.id && styles.selectedStudentName,
+          { color: colors.text },
+          selectedStudent === item.id && { color: "#fff" },
         ]}
       >
         {item.first_name} {item.last_name}
@@ -163,30 +173,31 @@ export default function ParentTransport() {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <Text>Loading transport information...</Text>
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ marginTop: 10, color: colors.text }}>Loading transport information...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Transport Information</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.header, { color: colors.text }]}>Transport Information</Text>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="bus-outline" size={60} color="#ccc" />
-          <Text style={styles.emptyText}>
+          <Ionicons name="bus-outline" size={60} color={colors.placeholderText} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
             No students linked to your account
           </Text>
-          <Text style={styles.emptySubtext}>
+          <Text style={[styles.emptySubtext, { color: colors.placeholderText }]}>
             Contact school administration to link your children
           </Text>
         </View>
       ) : (
         <>
           <View style={styles.studentSelector}>
-            <Text style={styles.selectorLabel}>Select Student:</Text>
+            <Text style={[styles.selectorLabel, { color: colors.text }]}>Select Student:</Text>
             <FlatList
               data={students}
               horizontal
@@ -197,61 +208,61 @@ export default function ParentTransport() {
           </View>
 
           {transportInfo ? (
-            <View style={styles.transportCard}>
+            <View style={[styles.transportCard, { backgroundColor: colors.card }]}>
               <View style={styles.cardHeader}>
-                <Ionicons name="bus" size={24} color="#007AFF" />
-                <Text style={styles.cardTitle}>{transportInfo.route_name}</Text>
+                <Ionicons name="bus" size={24} color={colors.primary} />
+                <Text style={[styles.cardTitle, { color: colors.text }]}>{transportInfo.route_name}</Text>
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="person" size={20} color="#666" />
+                <Ionicons name="person" size={20} color={colors.placeholderText} />
                 <View style={styles.infoTextContainer}>
-                  <Text style={styles.infoLabel}>Driver</Text>
-                  <Text style={styles.infoValue}>
+                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Driver</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.driver_name}
                   </Text>
                 </View>
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="call" size={20} color="#666" />
+                <Ionicons name="call" size={20} color={colors.placeholderText} />
                 <View style={styles.infoTextContainer}>
-                  <Text style={styles.infoLabel}>Contact</Text>
-                  <Text style={styles.infoValue}>
+                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Contact</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.driver_phone}
                   </Text>
                 </View>
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="car" size={20} color="#666" />
+                <Ionicons name="car" size={20} color={colors.placeholderText} />
                 <View style={styles.infoTextContainer}>
-                  <Text style={styles.infoLabel}>Vehicle</Text>
-                  <Text style={styles.infoValue}>
+                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Vehicle</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.vehicle_number}
                   </Text>
                 </View>
               </View>
 
-              <View style={styles.timeContainer}>
+              <View style={[styles.timeContainer, { borderTopColor: colors.border }]}>
                 <View style={styles.timeItem}>
-                  <Text style={styles.timeLabel}>Pickup</Text>
-                  <Text style={styles.timeValue}>
+                  <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Pickup</Text>
+                  <Text style={[styles.timeValue, { color: colors.text }]}>
                     {transportInfo.pickup_time}
                   </Text>
-                  <Text style={styles.location}>
+                  <Text style={[styles.location, { color: colors.placeholderText }]}>
                     {transportInfo.pickup_location}
                   </Text>
                 </View>
                 <View style={styles.timeSeparator}>
-                  <Ionicons name="arrow-forward" size={20} color="#999" />
+                  <Ionicons name="arrow-forward" size={20} color={colors.placeholderText} />
                 </View>
                 <View style={styles.timeItem}>
-                  <Text style={styles.timeLabel}>Dropoff</Text>
-                  <Text style={styles.timeValue}>
+                  <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Dropoff</Text>
+                  <Text style={[styles.timeValue, { color: colors.text }]}>
                     {transportInfo.dropoff_time}
                   </Text>
-                  <Text style={styles.location}>
+                  <Text style={[styles.location, { color: colors.placeholderText }]}>
                     {transportInfo.dropoff_location}
                   </Text>
                 </View>
@@ -262,9 +273,9 @@ export default function ParentTransport() {
               <Ionicons
                 name="information-circle-outline"
                 size={40}
-                color="#007AFF"
+                color={colors.primary}
               />
-              <Text style={styles.noTransportText}>
+              <Text style={[styles.noTransportText, { color: colors.placeholderText }]}>
                 No transport information available for this student
               </Text>
             </View>
@@ -278,13 +289,11 @@ export default function ParentTransport() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
     padding: 16,
   },
   header: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 20,
   },
   studentSelector: {
@@ -293,31 +302,19 @@ const styles = StyleSheet.create({
   selectorLabel: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 10,
   },
   studentItem: {
-    backgroundColor: "white",
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-  },
-  selectedStudent: {
-    backgroundColor: "#007AFF",
-    borderColor: "#007AFF",
   },
   studentName: {
     fontSize: 14,
-    color: "#333",
-  },
-  selectedStudentName: {
-    color: "white",
   },
   transportCard: {
-    backgroundColor: "white",
     borderRadius: 12,
     padding: 20,
     shadowColor: "#000",
@@ -334,7 +331,6 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#333",
     marginLeft: 10,
   },
   infoRow: {
@@ -347,12 +343,10 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 12,
-    color: "#999",
     marginBottom: 2,
   },
   infoValue: {
     fontSize: 16,
-    color: "#333",
     fontWeight: "500",
   },
   timeContainer: {
@@ -362,7 +356,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   timeItem: {
     alignItems: "center",
@@ -370,18 +363,15 @@ const styles = StyleSheet.create({
   },
   timeLabel: {
     fontSize: 12,
-    color: "#999",
     marginBottom: 5,
   },
   timeValue: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 5,
   },
   location: {
     fontSize: 14,
-    color: "#666",
   },
   timeSeparator: {
     marginHorizontal: 10,
@@ -395,13 +385,11 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   noTransportContainer: {
@@ -412,7 +400,6 @@ const styles = StyleSheet.create({
   },
   noTransportText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 16,
   },

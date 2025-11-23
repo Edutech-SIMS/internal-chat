@@ -3,26 +3,23 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  RefreshControl,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    RefreshControl,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 
 interface UserRole {
-  id: string;
-  user_id: string;
   role: string;
-  created_at: string;
 }
 
 interface School {
@@ -31,7 +28,7 @@ interface School {
   profiles: {
     id: string;
     email: string;
-    roles: UserRole[]; // Changed from role to roles
+    roles: UserRole[];
   }[];
 }
 
@@ -289,64 +286,32 @@ export default function SystemAdminPage() {
   const fetchSchools = async () => {
     setFetchingSchools(true);
     try {
-      // First fetch schools
-      const { data: schools, error: schoolsError } = await supabase
+      // Optimized: Fetch schools with nested profiles and roles in a single query
+      const { data: schoolsData, error } = await supabase
         .from("schools")
-        .select("id, name")
+        .select(`
+          id,
+          name,
+          profiles (
+            id,
+            email,
+            roles:user_roles (
+              role
+            )
+          )
+        `)
         .order("name");
 
-      if (schoolsError) throw schoolsError;
+      if (error) throw error;
 
-      if (!schools || schools.length === 0) {
-        setSchools([]);
-        return;
-      }
+      // Transform the data to match the expected structure if necessary
+      // The deep select returns the structure we need, but we might need to handle nulls
+      const formattedSchools = (schoolsData || []).map((school) => ({
+        ...school,
+        profiles: school.profiles || [],
+      }));
 
-      // Get all profile IDs from all schools
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, email, school_id");
-
-      if (profilesError) throw profilesError;
-
-      // Get all user roles
-      const { data: userRoles, error: rolesError } = await supabase
-        .from("user_roles")
-        .select("user_id, role");
-
-      if (rolesError) throw rolesError;
-
-      // Group roles by user_id
-      const rolesByUser: Record<string, UserRole[]> = {};
-      userRoles?.forEach((role) => {
-        if (!rolesByUser[role.user_id]) {
-          rolesByUser[role.user_id] = [];
-        }
-        rolesByUser[role.user_id].push({
-          id: role.user_id, // This is a simplification, in real scenario you'd have the actual role ID
-          user_id: role.user_id,
-          role: role.role,
-          created_at: new Date().toISOString(), // This is a placeholder
-        });
-      });
-
-      // Combine profiles with their roles and group by school
-      const schoolsWithProfiles = schools.map((school) => {
-        const schoolProfiles =
-          profiles
-            ?.filter((profile) => profile.school_id === school.id)
-            .map((profile) => ({
-              ...profile,
-              roles: rolesByUser[profile.id] || [],
-            })) || [];
-
-        return {
-          ...school,
-          profiles: schoolProfiles,
-        };
-      });
-
-      setSchools(schoolsWithProfiles);
+      setSchools(formattedSchools);
     } catch (error: any) {
       console.error("Error fetching schools:", error);
       Alert.alert("Error", "Failed to fetch schools.");

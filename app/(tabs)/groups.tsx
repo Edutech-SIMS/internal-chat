@@ -16,7 +16,9 @@ import {
   View,
 } from "react-native";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
+import { getThemeColors } from "../../themes";
 
 interface Group {
   id: string;
@@ -38,6 +40,23 @@ interface GroupMember {
   } | null;
 }
 
+// Define the raw data structure from Supabase that accounts for array issue
+interface RawGroupMemberData {
+  id: string;
+  user_id: string;
+  joined_at: string;
+  profiles:
+    | {
+        full_name: string | null;
+        email: string | null;
+      }[]
+    | {
+        full_name: string | null;
+        email: string | null;
+      }
+    | null;
+}
+
 interface User {
   id: string;
   user_id: string;
@@ -47,6 +66,8 @@ interface User {
 
 export default function GroupsScreen() {
   const { hasRole, profile, user } = useAuth();
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
   const router = useRouter();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,37 +138,56 @@ export default function GroupsScreen() {
 
   const loadGroupMembers = async (groupId: string) => {
     try {
-      // Fetch group members with user details
       const { data, error } = await supabase
         .from("group_members")
         .select(
           `
-          id,
-          user_id,
-          joined_at,
-          profiles!inner (
-            full_name,
-            email
-          )
-        `
+        id,
+        user_id,
+        joined_at,
+        profiles (
+          full_name,
+          email
+        )
+      `
         )
         .eq("group_id", groupId);
 
+      console.log("Group members data:", data);
+
       if (error) throw error;
 
-      // Transform the data to match GroupMember interface
-      const transformedData: GroupMember[] = (data || []).map((member) => ({
-        id: member.id,
-        user_id: member.user_id,
-        joined_at: member.joined_at,
-        profiles: member.profiles
-          ? {
-              full_name: member.profiles.full_name,
-              email: member.profiles.email,
-            }
-          : null,
-      }));
+      // Cast the data to the expected type with unknown first to avoid TS errors
+      const rawData = data as unknown as RawGroupMemberData[] | null;
 
+      const transformedData: GroupMember[] = (rawData || []).map((member) => {
+        // Handle case where profiles might be an array (unexpected but possible)
+        let profileData = null;
+        if (member.profiles) {
+          if (Array.isArray(member.profiles) && member.profiles.length > 0) {
+            // If it's an array, take the first item
+            profileData = {
+              full_name: member.profiles[0].full_name || null,
+              email: member.profiles[0].email || null,
+            };
+          } else if (!Array.isArray(member.profiles)) {
+            // If it's an object, use it directly
+            profileData = {
+              full_name: member.profiles.full_name || null,
+              email: member.profiles.email || null,
+            };
+          }
+        }
+
+        return {
+          id: member.id,
+          user_id: member.user_id,
+          joined_at: member.joined_at,
+          profiles: profileData,
+        };
+      });
+
+      console.log("Transformed group members data:", transformedData);
       setGroupMembers(transformedData);
     } catch (error: any) {
       console.error("Error loading group members:", error);
@@ -155,7 +195,7 @@ export default function GroupsScreen() {
     }
   };
 
-  const loadAvailableUsers = async () => {
+  const loadAvailableUsers = async (group: Group) => {
     try {
       // Fetch all users in the school
       const { data: profiles, error: profilesError } = await supabase
@@ -169,7 +209,7 @@ export default function GroupsScreen() {
       const { data: existingMembers, error: membersError } = await supabase
         .from("group_members")
         .select("user_id")
-        .eq("group_id", selectedGroup?.id);
+        .eq("group_id", group.id);
 
       if (membersError) throw membersError;
 
@@ -254,6 +294,7 @@ export default function GroupsScreen() {
   const handleViewMembers = async (group: Group) => {
     setSelectedGroup(group);
     await loadGroupMembers(group.id);
+    // Update loadAvailableUsers call in the members modal to pass the group
     setShowMembersModal(true);
   };
 
@@ -270,7 +311,7 @@ export default function GroupsScreen() {
 
       // Refresh members list
       await loadGroupMembers(selectedGroup.id);
-      await loadAvailableUsers();
+      await loadAvailableUsers(selectedGroup);
 
       Alert.alert("Success", `Added ${userName} to the group`);
     } catch (error: any) {
@@ -280,6 +321,8 @@ export default function GroupsScreen() {
   };
 
   const handleRemoveMember = async (memberId: string, userName: string) => {
+    if (!selectedGroup) return;
+
     Alert.alert(
       "Remove Member",
       `Are you sure you want to remove ${userName} from this group?`,
@@ -298,8 +341,10 @@ export default function GroupsScreen() {
               if (error) throw error;
 
               // Refresh members list
-              await loadGroupMembers(selectedGroup!.id);
-              await loadAvailableUsers();
+              if (selectedGroup) {
+                await loadGroupMembers(selectedGroup.id);
+                await loadAvailableUsers(selectedGroup);
+              }
 
               Alert.alert("Success", `Removed ${userName} from the group`);
             } catch (error: any) {
@@ -366,20 +411,20 @@ export default function GroupsScreen() {
 
   const renderGroupItem = (group: Group) => {
     return (
-      <View key={group.id} style={styles.groupCard}>
+      <View key={group.id} style={[styles.groupCard, { backgroundColor: colors.card }]}>
         <View style={styles.groupHeader}>
-          <View style={styles.groupIcon}>
+          <View style={[styles.groupIcon, { backgroundColor: colors.primary + "20" }]}>
             <Ionicons
               name={
                 group.is_announcement ? "megaphone-outline" : "people-outline"
               }
               size={24}
-              color="#007AFF"
+              color={colors.primary}
             />
           </View>
           <View style={styles.groupInfo}>
-            <Text style={styles.groupName}>{group.name}</Text>
-            <Text style={styles.groupDescription} numberOfLines={1}>
+            <Text style={[styles.groupName, { color: colors.text }]}>{group.name}</Text>
+            <Text style={[styles.groupDescription, { color: colors.placeholderText }]} numberOfLines={1}>
               {group.description || "No description"}
             </Text>
           </View>
@@ -416,10 +461,14 @@ export default function GroupsScreen() {
             <Text style={styles.actionButtonText}>View Members</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionButton, styles.deleteButton]}
-            onPress={() => handleDeleteGroup(group.id, group.name || "Group")}
+            style={[styles.actionButton, styles.addButton]}
+            onPress={async () => {
+              setSelectedGroup(group);
+              await loadAvailableUsers(group);
+              setShowAddMemberModal(true);
+            }}
           >
-            <Text style={styles.actionButtonText}>Delete</Text>
+            <Text style={styles.actionButtonText}>Add Member</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -430,10 +479,14 @@ export default function GroupsScreen() {
     <View style={styles.memberItem}>
       <View style={styles.memberInfo}>
         <Text style={styles.memberName}>
-          {item.profiles?.full_name || "Unknown User"}
+          {item.profiles?.full_name || item.profiles?.email || "Unknown User"}
         </Text>
         <Text style={styles.memberEmail}>
-          {item.profiles?.email || "No email"}
+          {item.profiles?.email && item.profiles?.full_name
+            ? item.profiles.email
+            : item.profiles?.full_name
+            ? "No email"
+            : ""}
         </Text>
       </View>
       <Text style={styles.joinedDate}>
@@ -455,7 +508,7 @@ export default function GroupsScreen() {
       style={styles.userItem}
       onPress={async () => {
         await handleAddMember(item.user_id, item.full_name || "User");
-        setShowAddMemberModal(false);
+        setShowAddMemberModal(false); // Close the modal after adding
       }}
     >
       <View style={styles.userInfo}>
@@ -468,9 +521,9 @@ export default function GroupsScreen() {
 
   if (!isAdmin) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
         <View style={styles.container}>
-          <View style={styles.header}>
+          <View style={[styles.header, { backgroundColor: colors.primary }]}>
             <View style={styles.iconContainer}>
               <Ionicons name="git-branch" size={32} color="#fff" />
             </View>
@@ -480,14 +533,14 @@ export default function GroupsScreen() {
             </Text>
           </View>
           <View style={styles.content}>
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.placeholderContainer}>
                 <Ionicons
                   name="lock-closed-outline"
                   size={60}
-                  color="#007AFF"
+                  color={colors.primary}
                 />
-                <Text style={styles.placeholderText}>
+                <Text style={[styles.placeholderText, { color: colors.placeholderText }]}>
                   You don{`'`}t have permission to access this feature
                 </Text>
               </View>
@@ -499,14 +552,14 @@ export default function GroupsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.container}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.primary }]}>
           <View style={styles.iconContainer}>
             <Ionicons name="git-branch" size={32} color="#fff" />
           </View>
@@ -515,22 +568,22 @@ export default function GroupsScreen() {
         </View>
 
         <View style={styles.content}>
-          <View style={styles.statsCard}>
+          <View style={[styles.statsCard, { backgroundColor: colors.card }]}>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{groups.length}</Text>
-              <Text style={styles.statLabel}>Total Groups</Text>
+              <Text style={[styles.statValue, { color: colors.primary }]}>{groups.length}</Text>
+              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Total Groups</Text>
             </View>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>
+              <Text style={[styles.statValue, { color: colors.primary }]}>
                 {groups.filter((g) => g.is_public).length}
               </Text>
-              <Text style={styles.statLabel}>Public</Text>
+              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Public</Text>
             </View>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>
+              <Text style={[styles.statValue, { color: colors.primary }]}>
                 {groups.filter((g) => g.is_announcement).length}
               </Text>
-              <Text style={styles.statLabel}>Announcement</Text>
+              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Announcement</Text>
             </View>
           </View>
 
@@ -594,14 +647,12 @@ export default function GroupsScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Create New Group</Text>
-                <TouchableOpacity onPress={() => setShowCreateModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create New Group</Text>
+              <TouchableOpacity onPress={() => setShowCreateModal(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
 
             <TextInput
               style={styles.input}
@@ -702,16 +753,6 @@ export default function GroupsScreen() {
                 {groupMembers.length} member
                 {groupMembers.length !== 1 ? "s" : ""}
               </Text>
-              <TouchableOpacity
-                style={styles.addButton}
-                onPress={async () => {
-                  await loadAvailableUsers();
-                  setShowAddMemberModal(true);
-                }}
-              >
-                <Ionicons name="add" size={20} color="#fff" />
-                <Text style={styles.addButtonText}>Add Member</Text>
-              </TouchableOpacity>
             </View>
 
             <FlatList
@@ -755,7 +796,7 @@ export default function GroupsScreen() {
         onRequestClose={() => setShowAddMemberModal(false)}
       >
         <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { height: "90%", flex: 1 }]}>
+          <View style={[styles.modalContent, { height: "80%" }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Member to Group</Text>
               <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>

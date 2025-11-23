@@ -1,15 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
-  FlatList,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
+import { getThemeColors } from "../../themes";
 
 interface Student {
   id: string;
@@ -28,7 +33,11 @@ interface ClassInfo {
 }
 
 export default function TeacherScreen() {
+  const router = useRouter();
   const { user, profile } = useAuth();
+  const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [classInfo, setClassInfo] = useState<ClassInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,319 +50,430 @@ export default function TeacherScreen() {
     }
   }, [user?.id, profile?.school_id]);
 
+  const handleTakeAttendance = () => {
+    router.push("/attendance");
+  };
+
+  const handleRecordAssessment = () => {
+    Alert.alert("Coming Soon", "Assessment recording module is under development.");
+  };
+
+  const handleMessageParents = () => {
+    router.push("/"); // Navigate to Chats tab
+  };
+
   const fetchTeacherData = async () => {
     try {
-      // Fetch teacher's assigned classes using the correct tables
-      const { data: classesData, error: classesError } = await supabase
+      setLoading(true);
+      
+      // Step 1: Get teacher record
+      const { data: teacherRecord, error: teacherError } = await supabase
+        .from("teachers")
+        .select("id, user_id")
+        .eq("user_id", profile?.user_id)
+        .single();
+
+      if (teacherError) {
+        console.log("Error fetching teacher record:", teacherError);
+        setLoading(false);
+        return;
+      }
+
+      if (!teacherRecord) {
+        console.log("No teacher record found for user:", profile?.user_id);
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: Get class assignment using teacher_id
+      const { data: assignment, error: assignmentError } = await supabase
         .from("teacher_assignments")
-        .select(
-          `
+        .select(`
+          assignment_id,
           class_id,
-          subjects(name),
-          classes(class_name)
-        `
-        )
-        .eq("teacher_id", user?.id)
-        .eq("school_id", profile?.school_id)
-        .limit(1); // Get first class for now
-
-      if (classesError) throw classesError;
-
-      let classInfo: ClassInfo | null = null;
-      if (classesData && classesData.length > 0) {
-        const classData = classesData[0];
-        classInfo = {
-          id: classData.class_id,
-          name:
-            classData.classes && classData.classes.length > 0
-              ? classData.classes[0].class_name
-              : "Unnamed Class",
-          subject:
-            classData.subjects && classData.subjects.length > 0
-              ? classData.subjects[0].name
-              : "General",
-        };
-        setClassInfo(classInfo);
-      }
-
-      // Fetch students in the class
-      let studentsData: Student[] = [];
-      if (classInfo) {
-        const { data: classStudents, error: studentsError } = await supabase
-          .from("enrollments")
-          .select(
-            `
-            students(
+          classes!teacher_assignments_class_id_fkey!inner (
+            class_id,
+            name,
+            grade_level,
+            enrollments!enrollments_class_id_fkey!inner (
               id,
-              student_id,
-              first_name,
-              last_name,
-              class_level,
-              section,
-              profile_picture_url
+              status,
+              students!enrollments_student_id_fkey!inner (
+                id,
+                student_id,
+                first_name,
+                last_name,
+                profile_picture_url
+              )
             )
-          `
           )
-          .eq("class_id", classInfo.id)
-          .eq("school_id", profile?.school_id);
+        `)
+        .eq("teacher_id", teacherRecord.id)
+        .eq("assignment_type", "class_teacher")
+        .eq("status", "active")
+        .maybeSingle();
 
-        if (studentsError) throw studentsError;
-
-        studentsData = (classStudents || [])
-          .map((cs: any) => cs.students)
-          .filter(Boolean) as Student[];
+      if (assignmentError) {
+        console.error("Error fetching teacher assignment:", assignmentError);
+        throw assignmentError;
       }
 
-      setStudents(studentsData);
-      setTotalStudents(studentsData.length);
+      if (assignment && assignment.classes) {
+        const classData = assignment.classes as any;
+        
+        // Set class info
+        setClassInfo({
+          id: assignment.class_id,
+          name: classData.name,
+          subject: `Grade ${classData.grade_level} - Homeroom`,
+        });
 
-      // Calculate today's attendance
-      if (studentsData.length > 0 && classInfo) {
-        const today = new Date().toISOString().split("T")[0];
-        const { count: attendanceCount, error: attendanceError } =
-          await supabase
-            .from("attendance")
-            .select("*", { count: "exact" })
-            .eq("class_id", classInfo.id)
-            .eq("date", today)
-            .eq("status", "present");
-
-        if (!attendanceError) {
-          setTodayAttendance(attendanceCount || 0);
-        } else {
-          setTodayAttendance(0);
+        // Process students
+        if (classData.enrollments && classData.enrollments.length > 0) {
+          const studentList = classData.enrollments
+            .filter((e: any) => e.status === 'active')
+            .map((e: any) => ({
+              id: e.students.id,
+              student_id: e.students.student_id,
+              first_name: e.students.first_name,
+              last_name: e.students.last_name,
+              profile_picture_url: e.students.profile_picture_url,
+              class_level: classData.grade_level
+            }));
+            
+          setStudents(studentList);
+          setTotalStudents(studentList.length);
+          
+          // Fetch today's attendance count
+          const today = new Date().toISOString().split('T')[0];
+          const { count, error: attendanceError } = await supabase
+            .from('attendance')
+            .select('*', { count: 'exact', head: true })
+            .eq('class_id', assignment.class_id)
+            .eq('date', today)
+            .eq('status', 'present');
+            
+          if (!attendanceError) {
+            setTodayAttendance(count || 0);
+          }
         }
-      } else {
-        setTodayAttendance(0);
       }
     } catch (error) {
       console.error("Error fetching teacher data:", error);
-      Alert.alert("Error", "Failed to load class information");
+      Alert.alert("Error", "Failed to load class data");
     } finally {
       setLoading(false);
     }
   };
 
-  const renderStudent = ({ item }: { item: Student }) => (
-    <TouchableOpacity style={styles.studentItem} activeOpacity={0.7}>
-      <View style={styles.studentAvatar}>
-        <Ionicons name="person" size={20} color="#fff" />
-      </View>
-      <View style={styles.studentInfo}>
-        <Text style={styles.studentName} numberOfLines={1}>
-          {item.first_name} {item.last_name}
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <View>
+        <Text style={[styles.greeting, { color: colors.text }]}>
+          Welcome back,
         </Text>
-        <Text style={styles.studentId}>ID: {item.student_id}</Text>
+        <Text style={[styles.teacherName, { color: colors.text }]}>
+          {profile?.full_name || "Teacher"}
+        </Text>
       </View>
-      <TouchableOpacity style={styles.actionButton}>
-        <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+      <TouchableOpacity
+        style={[styles.profileButton, { backgroundColor: colors.card }]}
+      >
+        <Ionicons name="person" size={24} color={colors.primary} />
       </TouchableOpacity>
-    </TouchableOpacity>
+    </View>
+  );
+
+  const renderClassOverview = () => (
+    <View style={[styles.card, { backgroundColor: colors.card }]}>
+      <View style={styles.cardHeader}>
+        <View>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>
+            {classInfo?.name || "No Class Assigned"}
+          </Text>
+          <Text style={[styles.cardSubtitle, { color: colors.placeholderText }]}>
+            {classInfo?.subject || "Contact admin for assignment"}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.iconContainer,
+            { backgroundColor: colors.primary + "20" },
+          ]}
+        >
+          <Ionicons name="school" size={24} color={colors.primary} />
+        </View>
+      </View>
+
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.text }]}>
+            {totalStudents}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+            Students
+          </Text>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.text }]}>
+            {todayAttendance}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+            Present Today
+          </Text>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: colors.text }]}>
+            {totalStudents > 0
+              ? Math.round((todayAttendance / totalStudents) * 100)
+              : 0}
+            %
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+            Attendance
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderQuickActions = () => (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>
+        Quick Actions
+      </Text>
+      <View style={styles.actionsGrid}>
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={handleTakeAttendance}
+        >
+          <View
+            style={[styles.actionIcon, { backgroundColor: "#4CAF50" + "20" }]}
+          >
+            <Ionicons name="calendar" size={24} color="#4CAF50" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Take Attendance
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={handleRecordAssessment}
+        >
+          <View
+            style={[styles.actionIcon, { backgroundColor: "#2196F3" + "20" }]}
+          >
+            <Ionicons name="create" size={24} color="#2196F3" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Record Assessment
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={handleMessageParents}
+        >
+          <View
+            style={[styles.actionIcon, { backgroundColor: "#FF9800" + "20" }]}
+          >
+            <Ionicons name="chatbubbles" size={24} color="#FF9800" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Message Parents
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderStudentList = () => (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          My Students
+        </Text>
+      </View>
+      
+      {students.length === 0 ? (
+        <View style={[styles.emptyState, { backgroundColor: colors.card }]}>
+          <Text style={[styles.emptyStateText, { color: colors.placeholderText }]}>
+            No students found in your class.
+          </Text>
+        </View>
+      ) : (
+        students.map((student) => (
+          <View
+            key={student.id}
+            style={[styles.studentItem, { backgroundColor: colors.card }]}
+          >
+            <View
+              style={[
+                styles.studentAvatar,
+                { backgroundColor: colors.border },
+              ]}
+            >
+              {student.profile_picture_url ? (
+                // Use Image component here if URL exists
+                <Ionicons name="person" size={20} color={colors.placeholderText} />
+              ) : (
+                <Text style={[styles.avatarText, { color: colors.text }]}>
+                  {student.first_name[0]}
+                  {student.last_name[0]}
+                </Text>
+              )}
+            </View>
+            <View style={styles.studentInfo}>
+              <Text style={[styles.studentName, { color: colors.text }]}>
+                {student.first_name} {student.last_name}
+              </Text>
+              <Text
+                style={[
+                  styles.studentId,
+                  { color: colors.placeholderText },
+                ]}
+              >
+                ID: {student.student_id}
+              </Text>
+            </View>            
+          </View>
+        ))
+      )}
+    </View>
   );
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.centerContainer}>
-          <View style={styles.spinner} />
-          <Text style={styles.loadingText}>Loading teacher dashboard...</Text>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: colors.background }]}
+      >
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.text }]}>
+            Loading class data...
+          </Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Class</Text>
-      </View>
-
-      {classInfo && (
-        <View style={styles.classInfoCard}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconContainer}>
-              <Ionicons name="school" size={20} color="#fff" />
-            </View>
-            <View style={styles.classTextContainer}>
-              <Text style={styles.className}>{classInfo.name}</Text>
-              <Text style={styles.classSubject}>{classInfo.subject}</Text>
-            </View>
-          </View>
-
-          <View style={styles.attendanceSummary}>
-            <View style={styles.attendanceItem}>
-              <Text style={styles.attendanceValue}>{todayAttendance}</Text>
-              <Text style={styles.attendanceLabel}>Present</Text>
-            </View>
-            <View style={styles.attendanceItem}>
-              <Text style={styles.attendanceValue}>
-                {totalStudents - todayAttendance}
-              </Text>
-              <Text style={styles.attendanceLabel}>Absent</Text>
-            </View>
-            <View style={styles.attendanceItem}>
-              <Text style={styles.attendanceValue}>{totalStudents}</Text>
-              <Text style={styles.attendanceLabel}>Total</Text>
-            </View>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <View style={styles.sectionHeaderContent}>
-            <Ionicons name="people-outline" size={20} color="#007AFF" />
-            <Text style={styles.sectionTitle}>My Students</Text>
-          </View>
-          <TouchableOpacity>
-            <Text style={styles.viewAll}>View All</Text>
-          </TouchableOpacity>
-        </View>
-
-        {students.length > 0 ? (
-          <FlatList
-            data={students}
-            keyExtractor={(item) => item.id}
-            renderItem={renderStudent}
-            scrollEnabled={false}
-          />
-        ) : (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="person-outline" size={40} color="#007AFF" />
-            <Text style={styles.emptyText}>No students in your class</Text>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.quickActions}>
-        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
-            <Ionicons name="calendar" size={20} color="#007AFF" />
-          </View>
-          <Text style={styles.actionText}>Take Attendance</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-          <View style={[styles.actionIcon, { backgroundColor: "#e6f7ed" }]}>
-            <Ionicons name="document-text" size={20} color="#28a745" />
-          </View>
-          <Text style={styles.actionText}>Record Assessment</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
-          <View style={[styles.actionIcon, { backgroundColor: "#fff8e6" }]}>
-            <Ionicons name="chatbubble" size={20} color="#ffc107" />
-          </View>
-          <Text style={styles.actionText}>Message Parents</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }]}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {renderHeader()}
+        {renderClassOverview()}
+        {renderQuickActions()}
+        {renderStudentList()}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
   },
-  centerContainer: {
+  scrollContent: {
+    padding: 20,
+  },
+  loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
-  spinner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 3,
-    borderColor: "#007AFF",
-    borderTopColor: "transparent",
-    marginBottom: 16,
-  },
   loadingText: {
+    marginTop: 10,
     fontSize: 16,
-    color: "#666",
   },
   header: {
-    padding: 16,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 24,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
+  greeting: {
+    fontSize: 16,
+    marginBottom: 4,
   },
-  classInfoCard: {
-    backgroundColor: "white",
-    margin: 16,
-    borderRadius: 12,
-    padding: 20,
+  teacherName: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  profileButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 2,
+  },
+  card: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 20,
   },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  classTextContainer: {
-    flex: 1,
-  },
-  className: {
+  cardTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
+    marginBottom: 4,
   },
-  classSubject: {
-    fontSize: 16,
-    color: "#666",
-    marginTop: 2,
+  cardSubtitle: {
+    fontSize: 14,
   },
-  attendanceSummary: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    paddingTop: 20,
-  },
-  attendanceItem: {
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: "center",
     alignItems: "center",
   },
-  attendanceValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
+  statsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  attendanceLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 4,
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+  },
+  divider: {
+    width: 1,
+    height: 32,
+    backgroundColor: "#E0E0E0",
   },
   section: {
-    backgroundColor: "white",
-    marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    marginBottom: 24,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -361,91 +481,80 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
   },
-  sectionHeaderContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginLeft: 8,
-  },
-  viewAll: {
-    fontSize: 14,
-    color: "#007AFF",
-  },
-  studentItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-  },
-  studentAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  studentInfo: {
-    flex: 1,
-  },
-  studentName: {
-    fontSize: 16,
-    fontWeight: "500",
-    color: "#333",
-  },
-  studentId: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 2,
-  },
-  actionButton: {
-    padding: 8,
-  },
-  emptyContainer: {
-    padding: 30,
-    alignItems: "center",
-  },
-  emptyText: {
-    fontSize: 16,
-    color: "#666",
-    marginTop: 12,
-  },
-  quickActions: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginHorizontal: 16,
+    fontWeight: "bold",
     marginBottom: 16,
   },
-  actionCard: {
-    backgroundColor: "white",
-    borderRadius: 12,
+  seeAllText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  actionsGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  actionButton: {
+    flex: 1,
     padding: 16,
+    borderRadius: 12,
     alignItems: "center",
-    width: 100,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
     elevation: 2,
   },
   actionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
   },
   actionText: {
     fontSize: 12,
-    color: "#333",
-    marginTop: 8,
+    fontWeight: "600",
     textAlign: "center",
+  },
+  studentItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  studentAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  studentInfo: {
+    flex: 1,
+  },
+  studentName: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  studentId: {
+    fontSize: 12,
+  },
+  emptyState: {
+    padding: 20,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  emptyStateText: {
+    fontSize: 14,
   },
 });

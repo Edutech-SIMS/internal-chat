@@ -84,7 +84,7 @@ export default function Login() {
             marginBottom: 28,
           }}
         >
-          Hi there 👋 Sign in to keep the conversation going.
+          Hi there, it&apos;s good to have you back.
         </Text>
 
         {/* Email */}
