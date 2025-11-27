@@ -7,14 +7,15 @@ import {
   FlatList,
   Modal,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -27,34 +28,42 @@ interface Group {
   is_public: boolean;
   is_announcement: boolean;
   created_at: string;
+  created_by: string;
   member_count: number;
 }
 
 interface GroupMember {
   id: string;
   user_id: string;
+  profile_id?: string;
   joined_at: string;
+  can_send_messages?: boolean;
   profiles: {
+    id: string;
     full_name: string | null;
     email: string | null;
   } | null;
+  user_roles?: { role: string }[]; // Add roles property
 }
 
-// Define the raw data structure from Supabase that accounts for array issue
+// Update the RawGroupMemberData interface
 interface RawGroupMemberData {
   id: string;
   user_id: string;
   joined_at: string;
   profiles:
     | {
+        id: string;
         full_name: string | null;
         email: string | null;
       }[]
     | {
+        id: string;
         full_name: string | null;
         email: string | null;
       }
     | null;
+  // Remove direct user property reference since it causes typing issues
 }
 
 interface User {
@@ -62,6 +71,7 @@ interface User {
   user_id: string;
   full_name: string | null;
   email: string | null;
+  user_roles?: { role: string }[]; // Add roles property
 }
 
 export default function GroupsScreen() {
@@ -69,6 +79,18 @@ export default function GroupsScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
   const router = useRouter();
+
+  // Log the user roles to the console
+  useEffect(() => {
+    console.log("User roles:", profile?.roles);
+    console.log("Has admin role:", hasRole("admin"));
+    console.log("Has superadmin role:", hasRole("superadmin"));
+    console.log(
+      "Is admin (combined):",
+      hasRole("admin") || hasRole("superadmin")
+    );
+  }, [profile, hasRole]);
+
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,6 +100,15 @@ export default function GroupsScreen() {
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [selectedUsersForCreate, setSelectedUsersForCreate] = useState<
+    Set<string>
+  >(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
+  const [addMemberSearchQuery, setAddMemberSearchQuery] = useState("");
+  const [memberRoleFilter, setMemberRoleFilter] = useState<string>("all"); // Role filter for members modal
+  const [addMemberRoleFilter, setAddMemberRoleFilter] = useState<string>("all"); // Role filter for add member modal
   const [newGroup, setNewGroup] = useState({
     name: "",
     description: "",
@@ -138,52 +169,141 @@ export default function GroupsScreen() {
 
   const loadGroupMembers = async (groupId: string) => {
     try {
+      // Fetch members
       const { data, error } = await supabase
         .from("group_members")
         .select(
           `
-        id,
-        user_id,
-        joined_at,
-        profiles (
-          full_name,
-          email
-        )
-      `
+          id,
+          user_id,
+          joined_at,
+          profiles (
+            id,
+            full_name,
+            email
+          )
+        `
         )
         .eq("group_id", groupId);
 
-      console.log("Group members data:", data);
-
       if (error) throw error;
+
+      // Fetch permissions for this group
+      const { data: permissionsData, error: permissionsError } = await supabase
+        .from("group_message_permissions")
+        .select("user_id, can_send_messages")
+        .eq("group_id", groupId);
+
+      if (permissionsError && permissionsError.code !== "PGRST116") {
+        console.error("Error fetching permissions:", permissionsError);
+      }
+
+      // Create a map of permissions
+      // Note: group_message_permissions.user_id references profiles.id
+      const permissionsMap = new Map();
+      if (permissionsData) {
+        permissionsData.forEach((p) => {
+          permissionsMap.set(p.user_id, p.can_send_messages);
+        });
+      }
 
       // Cast the data to the expected type with unknown first to avoid TS errors
       const rawData = data as unknown as RawGroupMemberData[] | null;
 
+      // Fetch roles for all members by joining with profiles and user_roles
+      const profileIds =
+        rawData
+          ?.map((member) => {
+            if (member.profiles) {
+              if (
+                Array.isArray(member.profiles) &&
+                member.profiles.length > 0
+              ) {
+                return member.profiles[0].id;
+              } else if (!Array.isArray(member.profiles)) {
+                return member.profiles.id;
+              }
+            }
+            return null;
+          })
+          .filter(Boolean) || [];
+
+      let userRolesMap = new Map<string, { role: string }[]>();
+
+      if (profileIds.length > 0) {
+        const { data: userRolesData, error: rolesError } = await supabase
+          .from("profiles")
+          .select(
+            `
+            id,
+            user_id,
+            user_roles:user_roles(role)
+          `
+          )
+          .in("id", profileIds);
+
+        if (rolesError) {
+          console.error("Error fetching user roles:", rolesError);
+        } else {
+          // Create a map of user roles using user_id as key
+          userRolesData?.forEach((profile) => {
+            if (profile.user_id) {
+              userRolesMap.set(profile.user_id, profile.user_roles || []);
+            }
+          });
+        }
+      }
+
       const transformedData: GroupMember[] = (rawData || []).map((member) => {
         // Handle case where profiles might be an array (unexpected but possible)
         let profileData = null;
+        let profileId: string | undefined;
+
         if (member.profiles) {
           if (Array.isArray(member.profiles) && member.profiles.length > 0) {
             // If it's an array, take the first item
             profileData = {
+              id: member.profiles[0].id,
               full_name: member.profiles[0].full_name || null,
               email: member.profiles[0].email || null,
             };
+            profileId = member.profiles[0].id;
           } else if (!Array.isArray(member.profiles)) {
             // If it's an object, use it directly
             profileData = {
+              id: member.profiles.id,
               full_name: member.profiles.full_name || null,
               email: member.profiles.email || null,
             };
+            profileId = member.profiles.id;
           }
         }
+
+        // Get user roles from the map using user_id
+        const userRoles = member.user_id
+          ? userRolesMap.get(member.user_id) || []
+          : [];
+
+        // Log member roles for debugging
+        console.log(
+          `Member ${
+            profileData?.full_name || profileData?.email || "Unknown"
+          } roles:`,
+          userRoles
+        );
 
         return {
           id: member.id,
           user_id: member.user_id,
+          profile_id: profileId,
           joined_at: member.joined_at,
           profiles: profileData,
+          user_roles: userRoles, // Include user roles in the transformed data
+          // Check permission using Profile ID
+          can_send_messages:
+            profileId && permissionsMap.has(profileId)
+              ? permissionsMap.get(profileId)
+              : false,
         };
       });
 
@@ -197,10 +317,16 @@ export default function GroupsScreen() {
 
   const loadAvailableUsers = async (group: Group) => {
     try {
-      // Fetch all users in the school
+      // Fetch all users in the school with their roles
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, user_id, full_name, email")
+        .select(`
+          id, 
+          user_id, 
+          full_name, 
+          email,
+          user_roles:user_roles(role)
+        `)
         .eq("school_id", profile?.school_id);
 
       if (profilesError) throw profilesError;
@@ -223,6 +349,23 @@ export default function GroupsScreen() {
     } catch (error: any) {
       console.error("Error loading available users:", error);
       Alert.alert("Error", error.message || "Failed to load available users");
+    }
+  };
+
+  const loadAllUsers = async () => {
+    try {
+      const { data: profiles, error } = await supabase
+        .from("profiles")
+        .select("id, user_id, full_name, email")
+        .eq("school_id", profile?.school_id);
+
+      if (error) throw error;
+
+      // Filter out the current user
+      const otherUsers = profiles?.filter((p) => p.user_id !== user?.id) || [];
+      setAllUsers(otherUsers);
+    } catch (error: any) {
+      console.error("Error loading all users:", error);
     }
   };
 
@@ -270,6 +413,22 @@ export default function GroupsScreen() {
 
       if (memberError) throw memberError;
 
+      // Add selected members
+      if (selectedUsersForCreate.size > 0) {
+        const membersToAdd = Array.from(selectedUsersForCreate).map(
+          (userId) => ({
+            group_id: groupData.id,
+            user_id: userId,
+          })
+        );
+
+        const { error: batchError } = await supabase
+          .from("group_members")
+          .insert(membersToAdd);
+
+        if (batchError) throw batchError;
+      }
+
       // Refresh the list
       await loadGroups();
 
@@ -281,6 +440,10 @@ export default function GroupsScreen() {
         is_public: true,
         is_announcement: false,
       });
+      setSelectedUsersForCreate(new Set());
+      setSearchQuery("");
+      setMemberSearchQuery(""); // Reset member search
+      setAddMemberSearchQuery(""); // Reset add member search
 
       Alert.alert("Success", "Group created successfully");
     } catch (error: any) {
@@ -293,30 +456,110 @@ export default function GroupsScreen() {
 
   const handleViewMembers = async (group: Group) => {
     setSelectedGroup(group);
+    setMemberSearchQuery(""); // Reset search when opening modal
+    setMemberRoleFilter("all"); // Reset role filter when opening modal
     await loadGroupMembers(group.id);
-    // Update loadAvailableUsers call in the members modal to pass the group
     setShowMembersModal(true);
+  };
+
+  const openAddMemberModal = async (group: Group) => {
+    setSelectedGroup(group);
+    setAddMemberSearchQuery(""); // Reset add member search when opening modal
+    setAddMemberRoleFilter("all"); // Reset add member role filter when opening modal
+    await loadAvailableUsers(group);
+    setShowAddMemberModal(true);
   };
 
   const handleAddMember = async (userId: string, userName: string) => {
     if (!selectedGroup) return;
 
+    Alert.alert(
+      "Add Member",
+      `Are you sure you want to add ${userName} to this group?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Add",
+          onPress: async () => {
+            try {
+              const { error } = await supabase.from("group_members").insert({
+                group_id: selectedGroup.id,
+                user_id: userId,
+              });
+
+              if (error) throw error;
+
+              // Refresh members list
+              await loadGroupMembers(selectedGroup.id);
+              // Only reload available users if we're still in the add member modal
+              if (showAddMemberModal && selectedGroup) {
+                await loadAvailableUsers(selectedGroup);
+              }
+
+              Alert.alert("Success", `Added ${userName} to the group`);
+            } catch (error: any) {
+              console.error("Error adding member:", error);
+              Alert.alert(
+                "Error",
+                error.message || "Failed to add member to group"
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const toggleMessagePermission = async (
+    memberId: string,
+    profileId: string | undefined,
+    currentStatus: boolean
+  ) => {
+    if (!selectedGroup) return;
+    if (!profileId) {
+      Alert.alert("Error", "Cannot set permission: User profile not found");
+      return;
+    }
+
     try {
-      const { error } = await supabase.from("group_members").insert({
-        group_id: selectedGroup.id,
-        user_id: userId,
-      });
+      const newStatus = !currentStatus;
 
-      if (error) throw error;
+      // Optimistic update
+      setGroupMembers((prev) =>
+        prev.map((m) =>
+          m.id === memberId ? { ...m, can_send_messages: newStatus } : m
+        )
+      );
 
-      // Refresh members list
-      await loadGroupMembers(selectedGroup.id);
-      await loadAvailableUsers(selectedGroup);
+      console.log("Toggling permission for profile:", profileId);
 
-      Alert.alert("Success", `Added ${userName} to the group`);
+      const { error } = await supabase.from("group_message_permissions").upsert(
+        {
+          group_id: selectedGroup.id,
+          user_id: profileId, // Using Profile ID as required by schema
+          can_send_messages: newStatus,
+        },
+        { onConflict: "group_id,user_id" }
+      );
+
+      if (error) {
+        console.error("Supabase error toggling permission:", error);
+        // Revert on error
+        setGroupMembers((prev) =>
+          prev.map((m) =>
+            m.id === memberId ? { ...m, can_send_messages: currentStatus } : m
+          )
+        );
+        throw error;
+      }
+
+      Alert.alert("Success", "Permission updated successfully");
     } catch (error: any) {
-      console.error("Error adding member:", error);
-      Alert.alert("Error", error.message || "Failed to add member to group");
+      console.error("Error toggling permission:", error);
+      Alert.alert(
+        "Error",
+        "Failed to update permission: " + (error.message || "Unknown error")
+      );
     }
   };
 
@@ -343,7 +586,10 @@ export default function GroupsScreen() {
               // Refresh members list
               if (selectedGroup) {
                 await loadGroupMembers(selectedGroup.id);
-                await loadAvailableUsers(selectedGroup);
+                // Also refresh available users if the add member modal is open
+                if (showAddMemberModal) {
+                  await loadAvailableUsers(selectedGroup);
+                }
               }
 
               Alert.alert("Success", `Removed ${userName} from the group`);
@@ -411,9 +657,17 @@ export default function GroupsScreen() {
 
   const renderGroupItem = (group: Group) => {
     return (
-      <View key={group.id} style={[styles.groupCard, { backgroundColor: colors.card }]}>
+      <View
+        key={group.id}
+        style={[styles.groupCard, { backgroundColor: colors.card }]}
+      >
         <View style={styles.groupHeader}>
-          <View style={[styles.groupIcon, { backgroundColor: colors.primary + "20" }]}>
+          <View
+            style={[
+              styles.groupIcon,
+              { backgroundColor: colors.primary + "20" },
+            ]}
+          >
             <Ionicons
               name={
                 group.is_announcement ? "megaphone-outline" : "people-outline"
@@ -423,8 +677,16 @@ export default function GroupsScreen() {
             />
           </View>
           <View style={styles.groupInfo}>
-            <Text style={[styles.groupName, { color: colors.text }]}>{group.name}</Text>
-            <Text style={[styles.groupDescription, { color: colors.placeholderText }]} numberOfLines={1}>
+            <Text style={[styles.groupName, { color: colors.text }]}>
+              {group.name}
+            </Text>
+            <Text
+              style={[
+                styles.groupDescription,
+                { color: colors.placeholderText },
+              ]}
+              numberOfLines={1}
+            >
               {group.description || "No description"}
             </Text>
           </View>
@@ -432,8 +694,16 @@ export default function GroupsScreen() {
 
         <View style={styles.groupDetails}>
           <View style={styles.detailItem}>
-            <Ionicons name="person-outline" size={16} color="#666" />
-            <Text style={styles.detailText}>{group.member_count} members</Text>
+            <Ionicons
+              name="person-outline"
+              size={16}
+              color={colors.placeholderText}
+            />
+            <Text
+              style={[styles.detailText, { color: colors.placeholderText }]}
+            >
+              {group.member_count} members
+            </Text>
           </View>
           <View style={styles.detailItem}>
             {group.is_public ? (
@@ -441,96 +711,254 @@ export default function GroupsScreen() {
             ) : (
               <Ionicons name="lock-closed-outline" size={16} color="#ffc107" />
             )}
-            <Text style={styles.detailText}>
+            <Text
+              style={[styles.detailText, { color: colors.placeholderText }]}
+            >
               {group.is_public ? "Public" : "Private"}
             </Text>
           </View>
           {group.is_announcement && (
             <View style={styles.detailItem}>
               <Ionicons name="megaphone-outline" size={16} color="#dc3545" />
-              <Text style={styles.detailText}>Announcement</Text>
+              <Text
+                style={[styles.detailText, { color: colors.placeholderText }]}
+              >
+                Announcement
+              </Text>
             </View>
           )}
         </View>
 
         <View style={styles.groupActions}>
           <TouchableOpacity
-            style={styles.actionButton}
+            style={[styles.actionButton, { backgroundColor: colors.border }]}
             onPress={() => handleViewMembers(group)}
           >
-            <Text style={styles.actionButtonText}>View Members</Text>
+            <Text style={[styles.actionButtonText, { color: colors.text }]}>
+              View Members
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionButton, styles.addButton]}
+            style={[styles.actionButton, { backgroundColor: colors.primary }]}
             onPress={async () => {
-              setSelectedGroup(group);
-              await loadAvailableUsers(group);
-              setShowAddMemberModal(true);
+              openAddMemberModal(group);
             }}
           >
-            <Text style={styles.actionButtonText}>Add Member</Text>
+            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+              Add Member
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   };
 
+  // Helper function to format roles for display
+  const formatUserRoles = (roles: { role: string }[] | undefined) => {
+    if (!roles || roles.length === 0) return "No roles assigned";
+    return roles.map((r) => r.role).join(", ");
+  };
+
+  // Helper function to check if member has admin or superadmin role
+  const isMemberAdminOrSuperadmin = (member: GroupMember) => {
+    if (!member.user_roles) return false;
+    return member.user_roles.some(
+      (role) => role.role === "admin" || role.role === "superadmin"
+    );
+  };
+
   const renderMemberItem = ({ item }: { item: GroupMember }) => (
-    <View style={styles.memberItem}>
+    <View style={[styles.memberItem, { borderBottomColor: colors.border }]}>
       <View style={styles.memberInfo}>
-        <Text style={styles.memberName}>
+        <Text style={[styles.memberName, { color: colors.text }]}>
           {item.profiles?.full_name || item.profiles?.email || "Unknown User"}
         </Text>
-        <Text style={styles.memberEmail}>
+        <Text style={[styles.memberEmail, { color: colors.placeholderText }]}>
           {item.profiles?.email && item.profiles?.full_name
             ? item.profiles.email
             : item.profiles?.full_name
             ? "No email"
             : ""}
         </Text>
+        {/* Display user roles */}
+        <Text
+          style={[
+            styles.memberEmail,
+            { color: colors.placeholderText, fontStyle: "italic" },
+          ]}
+        >
+          Role: {formatUserRoles(item.user_roles)}
+        </Text>
       </View>
-      <Text style={styles.joinedDate}>
+      {selectedGroup?.is_announcement &&
+        // Only show toggle if the current user is an admin (which they are if they see this screen)
+        // AND the target member is NOT the group creator (admins always have permission)
+        item.user_id !== selectedGroup.created_by && (
+          <View style={styles.permissionContainer}>
+            <Text
+              style={[
+                styles.permissionLabel,
+                { color: colors.placeholderText },
+              ]}
+            >
+              Can Post
+            </Text>
+            <Switch
+              value={item.can_send_messages}
+              onValueChange={() =>
+                toggleMessagePermission(
+                  item.id,
+                  item.profile_id,
+                  item.can_send_messages || false
+                )
+              }
+              trackColor={{ false: "#767577", true: colors.primary }}
+              thumbColor={item.can_send_messages ? "#fff" : "#f4f3f4"}
+            />
+          </View>
+        )}
+      <Text style={[styles.joinedDate, { color: colors.placeholderText }]}>
         {new Date(item.joined_at).toLocaleDateString()}
       </Text>
-      <TouchableOpacity
-        style={styles.removeButton}
-        onPress={() =>
-          handleRemoveMember(item.id, item.profiles?.full_name || "User")
-        }
-      >
-        <Ionicons name="close" size={20} color="#dc3545" />
-      </TouchableOpacity>
+      {/* Hide delete button for admin/superadmin users */}
+      {!isMemberAdminOrSuperadmin(item) && (
+        <TouchableOpacity
+          style={styles.removeButton}
+          onPress={() =>
+            handleRemoveMember(item.id, item.profiles?.full_name || "User")
+          }
+        >
+          <Ionicons name="close" size={20} color="#dc3545" />
+        </TouchableOpacity>
+      )}
     </View>
   );
 
   const renderAvailableUserItem = ({ item }: { item: User }) => (
     <TouchableOpacity
-      style={styles.userItem}
+      style={[styles.userItem, { borderBottomColor: colors.border }]}
       onPress={async () => {
         await handleAddMember(item.user_id, item.full_name || "User");
-        setShowAddMemberModal(false); // Close the modal after adding
+        // Keep the modal open to allow adding more members
+        // setShowAddMemberModal(false); // Commented out to keep modal open
       }}
     >
       <View style={styles.userInfo}>
-        <Text style={styles.userName}>{item.full_name}</Text>
-        <Text style={styles.userEmail}>{item.email}</Text>
+        <Text style={[styles.userName, { color: colors.text }]}>
+          {item.full_name}
+        </Text>
+        <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
+          {item.email}
+        </Text>
+        {/* Display user roles */}
+        <Text
+          style={[
+            styles.userEmail,
+            { color: colors.placeholderText, fontStyle: "italic" },
+          ]}
+        >
+          Role: {formatUserRoles(item.user_roles)}
+        </Text>
       </View>
-      <Ionicons name="add" size={24} color="#007AFF" />
+      <Ionicons name="add" size={24} color={colors.primary} />
     </TouchableOpacity>
   );
 
+  const toggleUserSelection = (userId: string) => {
+    const newSelection = new Set(selectedUsersForCreate);
+    if (newSelection.has(userId)) {
+      newSelection.delete(userId);
+    } else {
+      newSelection.add(userId);
+    }
+    setSelectedUsersForCreate(newSelection);
+  };
+
+  const renderUserSelectionItem = ({ item }: { item: User }) => {
+    const isSelected = selectedUsersForCreate.has(item.user_id);
+    return (
+      <TouchableOpacity
+        style={[styles.userItem, { borderBottomColor: colors.border }]}
+        onPress={() => toggleUserSelection(item.user_id)}
+      >
+        <View style={styles.userInfo}>
+          <Text style={[styles.userName, { color: colors.text }]}>
+            {item.full_name}
+          </Text>
+          <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
+            {item.email}
+          </Text>
+        </View>
+        <Ionicons
+          name={isSelected ? "checkbox" : "square-outline"}
+          size={24}
+          color={isSelected ? colors.primary : colors.placeholderText}
+        />
+      </TouchableOpacity>
+    );
+  };
+
+  const filteredUsers = allUsers.filter(
+    (u) =>
+      u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // New filter for group members
+  const filteredGroupMembers = groupMembers.filter((member) => {
+    // Apply name/email search filter
+    const matchesSearch =
+      member.profiles?.full_name
+        ?.toLowerCase()
+        .includes(memberSearchQuery.toLowerCase()) ||
+      member.profiles?.email
+        ?.toLowerCase()
+        .includes(memberSearchQuery.toLowerCase());
+
+    // Apply role filter
+    const matchesRole =
+      memberRoleFilter === "all" ||
+      (member.user_roles &&
+        member.user_roles.some((role) => role.role === memberRoleFilter));
+
+    return matchesSearch && matchesRole;
+  });
+
+  // Update the filteredAvailableUsers to include role filtering
+  const filteredAvailableUsers = availableUsers.filter((user) => {
+    // Apply name/email search filter
+    const matchesSearch =
+      user.full_name
+        ?.toLowerCase()
+        .includes(addMemberSearchQuery.toLowerCase()) ||
+      user.email?.toLowerCase().includes(addMemberSearchQuery.toLowerCase());
+
+    // Apply role filter
+    const matchesRole =
+      addMemberRoleFilter === "all" ||
+      (user.user_roles &&
+        user.user_roles.some((role) => role.role === addMemberRoleFilter));
+
+    return matchesSearch && matchesRole;
+  });
+
   if (!isAdmin) {
     return (
-      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: colors.background }]}
+      >
         <View style={styles.container}>
-          <View style={[styles.header, { backgroundColor: colors.primary }]}>
-            <View style={styles.iconContainer}>
-              <Ionicons name="git-branch" size={32} color="#fff" />
+          <View style={styles.header}>
+            <View>
+              <Text style={[styles.title, { color: colors.text }]}>
+                Group Management
+              </Text>
+              <Text
+                style={[styles.subtitle, { color: colors.placeholderText }]}
+              >
+                Access restricted to administrators
+              </Text>
             </View>
-            <Text style={styles.title}>Group Management</Text>
-            <Text style={styles.subtitle}>
-              Access restricted to administrators
-            </Text>
           </View>
           <View style={styles.content}>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
@@ -540,7 +968,12 @@ export default function GroupsScreen() {
                   size={60}
                   color={colors.primary}
                 />
-                <Text style={[styles.placeholderText, { color: colors.placeholderText }]}>
+                <Text
+                  style={[
+                    styles.placeholderText,
+                    { color: colors.placeholderText },
+                  ]}
+                >
                   You don{`'`}t have permission to access this feature
                 </Text>
               </View>
@@ -552,57 +985,85 @@ export default function GroupsScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: colors.background }]}
+    >
       <ScrollView
         style={styles.container}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        contentContainerStyle={{ paddingBottom: 40 }}
       >
-        <View style={[styles.header, { backgroundColor: colors.primary }]}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="git-branch" size={32} color="#fff" />
+        <View style={styles.header}>
+          <View>
+            <Text style={[styles.title, { color: colors.text }]}>
+              Group Management
+            </Text>
+            <Text style={[styles.subtitle, { color: colors.placeholderText }]}>
+              Manage groups and memberships
+            </Text>
           </View>
-          <Text style={styles.title}>Group Management</Text>
-          <Text style={styles.subtitle}>Manage groups and memberships</Text>
+          <TouchableOpacity
+            style={[styles.addButton, { backgroundColor: colors.primary }]}
+            onPress={() => {
+              loadAllUsers();
+              setShowCreateModal(true);
+            }}
+          >
+            <Ionicons name="add" size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.content}>
           <View style={[styles.statsCard, { backgroundColor: colors.card }]}>
             <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: colors.primary }]}>{groups.length}</Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Total Groups</Text>
+              <Text style={[styles.statValue, { color: colors.primary }]}>
+                {groups.length}
+              </Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Total Groups
+              </Text>
             </View>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.primary }]}>
                 {groups.filter((g) => g.is_public).length}
               </Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Public</Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Public
+              </Text>
             </View>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.primary }]}>
                 {groups.filter((g) => g.is_announcement).length}
               </Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Announcement</Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Announcement
+              </Text>
             </View>
           </View>
 
-          <View style={styles.actionsBar}>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => setShowCreateModal(true)}
-            >
-              <Ionicons name="add-circle-outline" size={20} color="#fff" />
-              <Text style={styles.buttonText}>Create Group</Text>
-            </TouchableOpacity>
-          </View>
-
           {error ? (
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.errorContainer}>
                 <Ionicons name="warning" size={40} color="#d32f2f" />
-                <Text style={styles.errorText}>Error loading data</Text>
-                <Text style={styles.errorDetail}>{error}</Text>
+                <Text style={[styles.errorText, { color: colors.text }]}>
+                  Error loading data
+                </Text>
+                <Text
+                  style={[
+                    styles.errorDetail,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  {error}
+                </Text>
                 <TouchableOpacity
                   style={styles.retryButton}
                   onPress={() => {
@@ -616,18 +1077,39 @@ export default function GroupsScreen() {
             </View>
           ) : loading ? (
             <View style={styles.placeholderContainer}>
-              <ActivityIndicator size="large" color="#007AFF" />
-              <Text style={styles.placeholderText}>Loading groups...</Text>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text
+                style={[
+                  styles.placeholderText,
+                  { color: colors.placeholderText },
+                ]}
+              >
+                Loading groups...
+              </Text>
             </View>
           ) : groups.length > 0 ? (
             groups.map(renderGroupItem)
           ) : (
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.placeholderContainer}>
-                <Ionicons name="git-branch-outline" size={60} color="#007AFF" />
-                <Text style={styles.placeholderText}>No groups found</Text>
+                <Ionicons
+                  name="git-branch-outline"
+                  size={60}
+                  color={colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.placeholderText,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  No groups found
+                </Text>
                 <TouchableOpacity
-                  style={styles.primaryButton}
+                  style={[
+                    styles.primaryButton,
+                    { backgroundColor: colors.primary },
+                  ]}
                   onPress={() => setShowCreateModal(true)}
                 >
                   <Text style={styles.buttonText}>Create Your First Group</Text>
@@ -641,91 +1123,156 @@ export default function GroupsScreen() {
       {/* Create Group Modal */}
       <Modal
         animationType="slide"
-        transparent={true}
+        presentationStyle="pageSheet"
         visible={showCreateModal}
         onRequestClose={() => setShowCreateModal(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Create New Group</Text>
-              <TouchableOpacity onPress={() => setShowCreateModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
+        <View style={[styles.modalContainer, { backgroundColor: colors.card }]}>
+          <View
+            style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              Create New Group
+            </Text>
+            <TouchableOpacity onPress={() => setShowCreateModal(false)}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Group Name"
-              value={newGroup.name}
-              onChangeText={(text) => setNewGroup({ ...newGroup, name: text })}
+          <TextInput
+            style={[
+              styles.input,
+              {
+                backgroundColor: colors.background,
+                color: colors.text,
+                borderColor: colors.border,
+              },
+            ]}
+            placeholder="Group Name"
+            placeholderTextColor={colors.placeholderText}
+            value={newGroup.name}
+            onChangeText={(text) => setNewGroup({ ...newGroup, name: text })}
+          />
+
+          <TextInput
+            style={[
+              styles.input,
+              styles.textArea,
+              {
+                backgroundColor: colors.background,
+                color: colors.text,
+                borderColor: colors.border,
+              },
+            ]}
+            placeholder="Description (optional)"
+            placeholderTextColor={colors.placeholderText}
+            value={newGroup.description}
+            onChangeText={(text) =>
+              setNewGroup({ ...newGroup, description: text })
+            }
+            multiline
+            numberOfLines={3}
+          />
+
+          <View style={styles.checkboxContainer}>
+            <TouchableOpacity
+              style={styles.checkbox}
+              onPress={() => {
+                const isPublic = !newGroup.is_public;
+                setNewGroup({
+                  ...newGroup,
+                  is_public: isPublic,
+                  is_announcement: isPublic ? false : newGroup.is_announcement,
+                });
+              }}
+            >
+              <Ionicons
+                name={newGroup.is_public ? "checkbox" : "square-outline"}
+                size={20}
+                color={colors.primary}
+              />
+              <Text style={[styles.checkboxLabel, { color: colors.text }]}>
+                Public Group
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.checkbox}
+              onPress={() => {
+                const isAnnouncement = !newGroup.is_announcement;
+                setNewGroup({
+                  ...newGroup,
+                  is_announcement: isAnnouncement,
+                  is_public: isAnnouncement ? false : newGroup.is_public,
+                });
+              }}
+            >
+              <Ionicons
+                name={newGroup.is_announcement ? "checkbox" : "square-outline"}
+                size={20}
+                color={colors.primary}
+              />
+              <Text style={[styles.checkboxLabel, { color: colors.text }]}>
+                Announcement Group
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            Add Members (Optional)
+          </Text>
+          <View style={styles.searchContainer}>
+            <Ionicons
+              name="search"
+              size={20}
+              color={colors.placeholderText}
+              style={styles.searchIcon}
             />
-
             <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Description (optional)"
-              value={newGroup.description}
-              onChangeText={(text) =>
-                setNewGroup({ ...newGroup, description: text })
-              }
-              multiline
-              numberOfLines={3}
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search users..."
+              placeholderTextColor={colors.placeholderText}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
             />
+          </View>
 
-            <View style={styles.checkboxContainer}>
-              <TouchableOpacity
-                style={styles.checkbox}
-                onPress={() =>
-                  setNewGroup({ ...newGroup, is_public: !newGroup.is_public })
-                }
-              >
-                <Ionicons
-                  name={newGroup.is_public ? "checkbox" : "square-outline"}
-                  size={20}
-                  color="#007AFF"
-                />
-                <Text style={styles.checkboxLabel}>Public Group</Text>
-              </TouchableOpacity>
+          <FlatList
+            data={filteredUsers}
+            keyExtractor={(item) => item.user_id}
+            renderItem={renderUserSelectionItem}
+            style={styles.userSelectionList}
+            nestedScrollEnabled={true}
+          />
 
-              <TouchableOpacity
-                style={styles.checkbox}
-                onPress={() =>
-                  setNewGroup({
-                    ...newGroup,
-                    is_announcement: !newGroup.is_announcement,
-                  })
-                }
-              >
-                <Ionicons
-                  name={
-                    newGroup.is_announcement ? "checkbox" : "square-outline"
-                  }
-                  size={20}
-                  color="#007AFF"
-                />
-                <Text style={styles.checkboxLabel}>Announcement Group</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setShowCreateModal(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.createButton]}
-                onPress={handleCreateGroup}
-                disabled={createLoading}
-              >
-                {createLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.createButtonText}>Create</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[
+                styles.modalButton,
+                styles.cancelButton,
+                { backgroundColor: colors.border },
+              ]}
+              onPress={() => setShowCreateModal(false)}
+            >
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalButton,
+                styles.createButton,
+                { backgroundColor: colors.primary },
+              ]}
+              onPress={handleCreateGroup}
+              disabled={createLoading}
+            >
+              {createLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.createButtonText}>Create</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -733,57 +1280,85 @@ export default function GroupsScreen() {
       {/* Group Members Modal */}
       <Modal
         animationType="slide"
-        transparent={true}
+        presentationStyle="pageSheet"
         visible={showMembersModal}
         onRequestClose={() => setShowMembersModal(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { height: "90%" }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {selectedGroup?.name} Members
-              </Text>
-              <TouchableOpacity onPress={() => setShowMembersModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
+        <View style={[styles.modalContainer, { backgroundColor: colors.card }]}>
+          <View
+            style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {selectedGroup?.name} Members
+            </Text>
+            <TouchableOpacity onPress={() => setShowMembersModal(false)}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
 
-            <View style={styles.membersHeader}>
-              <Text style={styles.membersCount}>
-                {groupMembers.length} member
-                {groupMembers.length !== 1 ? "s" : ""}
-              </Text>
-            </View>
+          <View style={styles.membersHeader}>
+            <Text
+              style={[styles.membersCount, { color: colors.placeholderText }]}
+            >
+              {groupMembers.length} member
+              {groupMembers.length !== 1 ? "s" : ""}
+            </Text>
+          </View>
 
-            <FlatList
-              data={groupMembers}
-              keyExtractor={(item) => item.id}
-              renderItem={renderMemberItem}
-              style={styles.membersList}
-              ListEmptyComponent={
-                <View style={styles.emptyMembers}>
-                  <Ionicons name="people-outline" size={48} color="#ccc" />
-                  <Text style={styles.emptyMembersText}>
-                    No members in this group
-                  </Text>
-                </View>
-              }
+          {/* Add search input */}
+          <View style={styles.searchContainer}>
+            <Ionicons
+              name="search"
+              size={20}
+              color={colors.placeholderText}
+              style={styles.searchIcon}
             />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search members..."
+              placeholderTextColor={colors.placeholderText}
+              value={memberSearchQuery}
+              onChangeText={setMemberSearchQuery}
+            />
+          </View>
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.deleteButton]}
-                onPress={() =>
-                  selectedGroup &&
-                  handleDeleteGroup(
-                    selectedGroup.id,
-                    selectedGroup.name || "Group"
-                  )
-                }
-              >
-                <Text style={styles.deleteButtonText}>Delete Group</Text>
-              </TouchableOpacity>
-            </View>
+          <FlatList
+            data={filteredGroupMembers}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMemberItem}
+            style={styles.membersList}
+            ListEmptyComponent={
+              <View style={styles.emptyMembers}>
+                <Ionicons
+                  name="people-outline"
+                  size={48}
+                  color={colors.placeholderText}
+                />
+                <Text
+                  style={[
+                    styles.emptyMembersText,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  No members found
+                </Text>
+              </View>
+            }
+          />
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.deleteButton]}
+              onPress={() =>
+                selectedGroup &&
+                handleDeleteGroup(
+                  selectedGroup.id,
+                  selectedGroup.name || "Group"
+                )
+              }
+            >
+              <Text style={styles.deleteButtonText}>Delete Group</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -791,33 +1366,107 @@ export default function GroupsScreen() {
       {/* Add Member Modal */}
       <Modal
         animationType="slide"
-        transparent={true}
+        presentationStyle="pageSheet"
         visible={showAddMemberModal}
         onRequestClose={() => setShowAddMemberModal(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { height: "80%" }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Member to Group</Text>
-              <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
+        <View style={[styles.modalContainer, { backgroundColor: colors.card }]}>
+          <View
+            style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              Add Member
+            </Text>
+            <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
 
-            <FlatList
-              data={availableUsers}
-              keyExtractor={(item) => item.id}
-              renderItem={renderAvailableUserItem}
-              style={styles.usersList}
-              ListEmptyComponent={
-                <View style={styles.emptyUsers}>
-                  <Text style={styles.emptyUsersText}>
-                    No available users to add
-                  </Text>
-                </View>
-              }
+          {/* Add search input */}
+          <View style={styles.searchContainer}>
+            <Ionicons
+              name="search"
+              size={20}
+              color={colors.placeholderText}
+              style={styles.searchIcon}
+            />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search users..."
+              placeholderTextColor={colors.placeholderText}
+              value={addMemberSearchQuery}
+              onChangeText={setAddMemberSearchQuery}
             />
           </View>
+          
+          {/* Add role filter chips */}
+          <View style={styles.compactFilterContainer}>
+            <Ionicons
+              name="filter"
+              size={16}
+              color={colors.placeholderText}
+              style={{ marginRight: 8 }}
+            />
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterChipsContainer}
+            >
+              {[
+                { label: "All", value: "all" },
+                { label: "Admin", value: "admin" },
+                { label: "Super Admin", value: "superadmin" },
+                { label: "Parent", value: "parent" },
+                { label: "Teacher", value: "teacher" },
+                { label: "Student", value: "student" },
+              ].map((role) => (
+                <TouchableOpacity
+                  key={role.value}
+                  style={[
+                    styles.filterChip,
+                    addMemberRoleFilter === role.value && {
+                      backgroundColor: colors.primary,
+                    },
+                    addMemberRoleFilter !== role.value && {
+                      backgroundColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setAddMemberRoleFilter(role.value)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      addMemberRoleFilter === role.value && { color: "#fff" },
+                      addMemberRoleFilter !== role.value && {
+                        color: colors.text,
+                      },
+                    ]}
+                  >
+                    {role.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <FlatList
+            data={filteredAvailableUsers}
+            keyExtractor={(item) => item.user_id}
+            renderItem={renderAvailableUserItem}
+            style={styles.membersList}
+            ListEmptyComponent={
+              <View style={styles.emptyMembers}>
+                <Text
+                  style={[
+                    styles.emptyMembersText,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  No available users to add
+                </Text>
+              </View>
+            }
+          />
         </View>
       </Modal>
     </SafeAreaView>
@@ -827,299 +1476,256 @@ export default function GroupsScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
   },
   container: {
     flex: 1,
   },
   header: {
-    backgroundColor: "#007AFF",
-    padding: 20,
-    paddingTop: 40,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  iconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#0056b3",
-    justifyContent: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 15,
-    alignSelf: "center",
+    padding: 20,
+    paddingBottom: 10,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
-    color: "#fff",
-    marginTop: 10,
-    textAlign: "center",
   },
   subtitle: {
-    fontSize: 16,
-    color: "#e0e0e0",
-    marginTop: 5,
-    textAlign: "center",
-    marginBottom: 20,
+    fontSize: 14,
+    marginTop: 4,
   },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  statsCard: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
+  addButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  content: {
+    padding: 16,
+  },
+  statsCard: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   statItem: {
     alignItems: "center",
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#007AFF",
-  },
-  statLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 5,
-  },
-  actionsBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  primaryButton: {
-    backgroundColor: "#007AFF",
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    flexDirection: "row",
-    alignItems: "center",
     flex: 1,
   },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-    marginLeft: 8,
+  statValue: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
   },
   card: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2,
   },
-  placeholderContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 30,
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: "#999",
-    marginTop: 15,
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: 20,
-  },
   groupCard: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 15,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2,
   },
   groupHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 16,
   },
   groupIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#e3f2fd",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 15,
+    marginRight: 16,
   },
   groupInfo: {
     flex: 1,
   },
   groupName: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
+    fontWeight: "bold",
+    marginBottom: 4,
   },
   groupDescription: {
     fontSize: 14,
-    color: "#666",
-    marginTop: 2,
   },
   groupDetails: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginBottom: 15,
-    paddingBottom: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    marginBottom: 16,
+    gap: 12,
   },
   detailItem: {
     flexDirection: "row",
     alignItems: "center",
-    marginRight: 15,
-    marginBottom: 5,
+    gap: 4,
   },
   detailText: {
     fontSize: 12,
-    color: "#666",
-    marginLeft: 5,
   },
   groupActions: {
     flexDirection: "row",
-    justifyContent: "flex-end",
+    gap: 12,
   },
   actionButton: {
-    backgroundColor: "#007AFF",
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginLeft: 10,
-  },
-  deleteButton: {
-    backgroundColor: "#dc3545",
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
   },
   actionButtonText: {
-    color: "white",
     fontSize: 14,
     fontWeight: "600",
   },
+  placeholderContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  placeholderText: {
+    marginTop: 16,
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  primaryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+    gap: 8,
+  },
+  buttonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  errorContainer: {
+    alignItems: "center",
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginTop: 12,
+  },
+  errorDetail: {
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  retryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: "#007AFF",
+    borderRadius: 8,
+  },
   modalContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
   modalContent: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 20,
-    width: "90%",
-    maxHeight: "80%",
+    flex: 1,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    marginBottom: 16,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 12,
-    marginBottom: 15,
     fontSize: 16,
+    marginBottom: 16,
   },
   textArea: {
-    height: 80,
+    height: 100,
     textAlignVertical: "top",
   },
   checkboxContainer: {
-    marginBottom: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 24,
   },
   checkbox: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    gap: 8,
   },
   checkboxLabel: {
-    fontSize: 16,
-    color: "#333",
-    marginLeft: 10,
+    fontSize: 14,
   },
   modalActions: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 16,
   },
   modalButton: {
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
     flex: 1,
-    marginHorizontal: 5,
-    flexDirection: "row",
-    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
   },
   cancelButton: {
-    backgroundColor: "#f8f9fa",
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "transparent",
+  },
+  cancelButtonText: {
+    fontWeight: "600",
   },
   createButton: {
     backgroundColor: "#007AFF",
   },
-  cancelButtonText: {
-    color: "#666",
-    fontSize: 16,
-    fontWeight: "600",
-    textAlign: "center",
-  },
   createButtonText: {
-    color: "white",
-    fontSize: 16,
+    color: "#fff",
     fontWeight: "600",
-    textAlign: "center",
   },
   membersHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 16,
   },
   membersCount: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  addButton: {
-    backgroundColor: "#007AFF",
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  addButtonText: {
-    color: "white",
     fontSize: 14,
-    fontWeight: "600",
-    marginLeft: 5,
   },
   membersList: {
     flex: 1,
@@ -1129,7 +1735,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
   },
   memberInfo: {
     flex: 1,
@@ -1137,26 +1742,39 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
+    marginBottom: 2,
   },
   memberEmail: {
-    fontSize: 14,
-    color: "#666",
+    fontSize: 12,
   },
   joinedDate: {
     fontSize: 12,
-    color: "#999",
-    marginRight: 10,
+    marginRight: 12,
   },
   removeButton: {
-    padding: 5,
+    padding: 8,
+  },
+  emptyMembers: {
+    alignItems: "center",
+    padding: 32,
+  },
+  emptyMembersText: {
+    marginTop: 12,
+    fontSize: 14,
+  },
+  deleteButton: {
+    backgroundColor: "#fee2e2",
+  },
+  deleteButtonText: {
+    color: "#dc3545",
+    fontWeight: "600",
   },
   userItem: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
   },
   userInfo: {
     flex: 1,
@@ -1164,65 +1782,65 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
+    marginBottom: 2,
   },
   userEmail: {
-    fontSize: 14,
-    color: "#666",
+    fontSize: 12,
   },
-  usersList: {
-    flex: 1,
-    marginTop: 10,
-  },
-  emptyMembers: {
+  permissionContainer: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
+    marginRight: 12,
+    gap: 8,
   },
-  emptyMembersText: {
-    fontSize: 16,
-    color: "#999",
-    marginTop: 10,
+  permissionLabel: {
+    fontSize: 12,
   },
-  emptyUsers: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 20,
-  },
-  emptyUsersText: {
-    fontSize: 16,
-    color: "#999",
-  },
-  errorContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 30,
-  },
-  errorText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#d32f2f",
-    marginTop: 15,
-    textAlign: "center",
-  },
-  errorDetail: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 5,
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: "#007AFF",
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginTop: 10,
-  },
-  deleteButtonText: {
-    color: "white",
+  sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    textAlign: "center",
+    marginBottom: 12,
+    marginTop: 8,
   },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.05)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  userSelectionList: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  compactFilterContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    height: 40,
+  },
+  filterChipsContainer: {
+    alignItems: "center",
+    paddingRight: 16,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+
 });

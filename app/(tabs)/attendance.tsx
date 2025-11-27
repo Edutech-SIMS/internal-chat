@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -36,6 +38,7 @@ export default function AttendanceScreen() {
     new Date().toISOString().split("T")[0]
   );
   const [classInfo, setClassInfo] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const isParent = hasRole("parent");
   const isTeacher = hasRole("teacher");
@@ -48,14 +51,15 @@ export default function AttendanceScreen() {
     }
   }, [isTeacher, isParent, selectedDate]);
 
-  const loadParentAttendance = async () => {
+  const loadParentAttendance = async (isRefreshing = false) => {
     try {
-      setLoading(true);
+      if (!isRefreshing) setLoading(true);
 
       // Step 1: Get parent-student links
       const { data: links, error: linksError } = await supabase
         .from("parent_student_links")
-        .select(`
+        .select(
+          `
           student_id,
           students!inner (
             id,
@@ -63,7 +67,8 @@ export default function AttendanceScreen() {
             last_name,
             student_id
           )
-        `)
+        `
+        )
         .eq("parent_user_id", user?.id);
 
       if (linksError) throw linksError;
@@ -100,12 +105,7 @@ export default function AttendanceScreen() {
           student_id: student.id,
           student_name: `${student.first_name} ${student.last_name}`,
           student_number: student.student_id,
-          status: record?.status || "present", // Default to present if no record? Or maybe "unknown"?
-          // For parents, maybe we only show if a record exists?
-          // Let's assume if no record, it's not marked yet.
-          // But for simplicity, let's keep structure consistent.
-          // Actually, if no record exists, it means attendance hasn't been taken.
-          // We should probably indicate that.
+          status: record?.status || "present",
           is_marked: !!record,
           notes: record?.notes || "",
         };
@@ -120,9 +120,9 @@ export default function AttendanceScreen() {
     }
   };
 
-  const loadTeacherAttendance = async () => {
+  const loadTeacherAttendance = async (isRefreshing = false) => {
     try {
-      setLoading(true);
+      if (!isRefreshing) setLoading(true);
 
       // Step 1: Get teacher record
       const { data: teacherRecord, error: teacherError } = await supabase
@@ -141,13 +141,15 @@ export default function AttendanceScreen() {
       // Step 2: Get class assignment
       const { data: assignment, error: assignmentError } = await supabase
         .from("teacher_assignments")
-        .select(`
+        .select(
+          `
           class_id,
           classes!teacher_assignments_class_id_fkey!inner (
             class_id,
             name
           )
-        `)
+        `
+        )
         .eq("teacher_id", teacherRecord.id)
         .eq("assignment_type", "class_teacher")
         .eq("status", "active")
@@ -170,7 +172,8 @@ export default function AttendanceScreen() {
       // Step 3: Fetch students
       const { data: enrollments, error: studentsError } = await supabase
         .from("enrollments")
-        .select(`
+        .select(
+          `
           student_id,
           students!enrollments_student_id_fkey!inner (
             id,
@@ -178,7 +181,8 @@ export default function AttendanceScreen() {
             first_name,
             last_name
           )
-        `)
+        `
+        )
         .eq("class_id", assignment.class_id)
         .eq("status", "active")
         .eq("school_id", profile?.school_id);
@@ -224,6 +228,16 @@ export default function AttendanceScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    if (isTeacher) {
+      await loadTeacherAttendance(true);
+    } else if (isParent) {
+      await loadParentAttendance(true);
+    }
+    setRefreshing(false);
   };
 
   const handleStatusChange = (
@@ -324,11 +338,7 @@ export default function AttendanceScreen() {
         style={[styles.safeArea, { backgroundColor: colors.background }]}
       >
         <View style={styles.emptyContainer}>
-          <Ionicons
-            name="calendar-outline"
-            size={60}
-            color={colors.primary}
-          />
+          <Ionicons name="calendar-outline" size={60} color={colors.primary} />
           <Text style={[styles.emptyText, { color: colors.text }]}>
             Attendance view is not available for your role.
           </Text>
@@ -399,7 +409,9 @@ export default function AttendanceScreen() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             {isTeacher ? "Take Attendance" : "My Children's Attendance"}
           </Text>
-          <Text style={[styles.headerSubtitle, { color: colors.placeholderText }]}>
+          <Text
+            style={[styles.headerSubtitle, { color: colors.placeholderText }]}
+          >
             {isTeacher ? classInfo.name : "View attendance records"}
           </Text>
         </View>
@@ -490,7 +502,12 @@ export default function AttendanceScreen() {
         </View>
       )}
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {students.map((student: any) => (
           <View
             key={student.student_id}

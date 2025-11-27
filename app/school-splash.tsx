@@ -1,10 +1,17 @@
 import { useAuth } from "contexts/AuthContext";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Animated, Image, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Animated,
+  Image,
+  ImageBackground,
+  Text,
+  View,
+} from "react-native";
 
 export default function SchoolSplash() {
-  const { user, loading: authLoading, school } = useAuth();
+  const { user, loading: authLoading, school, hasRole } = useAuth();
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -38,12 +45,20 @@ export default function SchoolSplash() {
   useEffect(() => {
     if (!loading && school) {
       const redirectTimer = setTimeout(() => {
-        router.replace("/(tabs)");
+        if (hasRole("teacher")) {
+          router.replace("/teacher");
+        } else if (hasRole("parent")) {
+          router.replace("/parent");
+        } else if (hasRole("admin") || hasRole("superadmin")) {
+          router.replace("/admin");
+        } else {
+          router.replace("/chats");
+        }
       }, 2000);
 
       return () => clearTimeout(redirectTimer);
     }
-  }, [loading, school]);
+  }, [loading, school, hasRole]);
 
   if (authLoading) {
     return null;
@@ -53,18 +68,19 @@ export default function SchoolSplash() {
     return <Redirect href="/(auth)/login" />;
   }
 
-  const themeColor = school?.theme_color || "#007AFF";
   const schoolName = school?.name || "School";
   const logoUrl = school?.logo_url;
 
   return (
-    <View
+    <ImageBackground
+      source={require("../assets/images/school-scribbles.png")}
       style={{
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: themeColor,
+        backgroundColor: "#007AFF", // Fallback color
       }}
+      resizeMode="cover"
     >
       <Animated.View
         style={{
@@ -146,6 +162,6 @@ export default function SchoolSplash() {
           style={{ marginTop: 30 }}
         />
       )}
-    </View>
+    </ImageBackground>
   );
 }

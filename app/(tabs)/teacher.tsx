@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
@@ -43,6 +44,7 @@ export default function TeacherScreen() {
   const [loading, setLoading] = useState(true);
   const [todayAttendance, setTodayAttendance] = useState<number>(0);
   const [totalStudents, setTotalStudents] = useState<number>(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (user?.id && profile?.school_id) {
@@ -55,17 +57,20 @@ export default function TeacherScreen() {
   };
 
   const handleRecordAssessment = () => {
-    Alert.alert("Coming Soon", "Assessment recording module is under development.");
+    Alert.alert(
+      "Coming Soon",
+      "Assessment recording module is under development."
+    );
   };
 
   const handleMessageParents = () => {
     router.push("/"); // Navigate to Chats tab
   };
 
-  const fetchTeacherData = async () => {
+  const fetchTeacherData = async (isRefreshing = false) => {
     try {
-      setLoading(true);
-      
+      if (!isRefreshing) setLoading(true);
+
       // Step 1: Get teacher record
       const { data: teacherRecord, error: teacherError } = await supabase
         .from("teachers")
@@ -88,7 +93,8 @@ export default function TeacherScreen() {
       // Step 2: Get class assignment using teacher_id
       const { data: assignment, error: assignmentError } = await supabase
         .from("teacher_assignments")
-        .select(`
+        .select(
+          `
           assignment_id,
           class_id,
           classes!teacher_assignments_class_id_fkey!inner (
@@ -107,7 +113,8 @@ export default function TeacherScreen() {
               )
             )
           )
-        `)
+        `
+        )
         .eq("teacher_id", teacherRecord.id)
         .eq("assignment_type", "class_teacher")
         .eq("status", "active")
@@ -120,7 +127,7 @@ export default function TeacherScreen() {
 
       if (assignment && assignment.classes) {
         const classData = assignment.classes as any;
-        
+
         // Set class info
         setClassInfo({
           id: assignment.class_id,
@@ -131,28 +138,28 @@ export default function TeacherScreen() {
         // Process students
         if (classData.enrollments && classData.enrollments.length > 0) {
           const studentList = classData.enrollments
-            .filter((e: any) => e.status === 'active')
+            .filter((e: any) => e.status === "active")
             .map((e: any) => ({
               id: e.students.id,
               student_id: e.students.student_id,
               first_name: e.students.first_name,
               last_name: e.students.last_name,
               profile_picture_url: e.students.profile_picture_url,
-              class_level: classData.grade_level
+              class_level: classData.grade_level,
             }));
-            
+
           setStudents(studentList);
           setTotalStudents(studentList.length);
-          
+
           // Fetch today's attendance count
-          const today = new Date().toISOString().split('T')[0];
+          const today = new Date().toISOString().split("T")[0];
           const { count, error: attendanceError } = await supabase
-            .from('attendance')
-            .select('*', { count: 'exact', head: true })
-            .eq('class_id', assignment.class_id)
-            .eq('date', today)
-            .eq('status', 'present');
-            
+            .from("attendance")
+            .select("*", { count: "exact", head: true })
+            .eq("class_id", assignment.class_id)
+            .eq("date", today)
+            .eq("status", "present");
+
           if (!attendanceError) {
             setTodayAttendance(count || 0);
           }
@@ -166,8 +173,14 @@ export default function TeacherScreen() {
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchTeacherData(true);
+    setRefreshing(false);
+  };
+
   const renderHeader = () => (
-    <View style={styles.header}>
+    <View style={styles.headerContainer}>
       <View>
         <Text style={[styles.greeting, { color: colors.text }]}>
           Welcome back,
@@ -175,6 +188,11 @@ export default function TeacherScreen() {
         <Text style={[styles.teacherName, { color: colors.text }]}>
           {profile?.full_name || "Teacher"}
         </Text>
+        {classInfo && (
+          <Text style={[styles.className, { color: colors.placeholderText }]}>
+            {classInfo.name}
+          </Text>
+        )}
       </View>
       <TouchableOpacity
         style={[styles.profileButton, { backgroundColor: colors.card }]}
@@ -184,57 +202,43 @@ export default function TeacherScreen() {
     </View>
   );
 
-  const renderClassOverview = () => (
-    <View style={[styles.card, { backgroundColor: colors.card }]}>
-      <View style={styles.cardHeader}>
-        <View>
-          <Text style={[styles.cardTitle, { color: colors.text }]}>
-            {classInfo?.name || "No Class Assigned"}
-          </Text>
-          <Text style={[styles.cardSubtitle, { color: colors.placeholderText }]}>
-            {classInfo?.subject || "Contact admin for assignment"}
-          </Text>
+  const renderStats = () => (
+    <View style={styles.statsContainer}>
+      <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+        <View style={[styles.statIcon, { backgroundColor: "#e3f2fd" }]}>
+          <Ionicons name="people" size={24} color="#007AFF" />
         </View>
-        <View
-          style={[
-            styles.iconContainer,
-            { backgroundColor: colors.primary + "20" },
-          ]}
-        >
-          <Ionicons name="school" size={24} color={colors.primary} />
-        </View>
+        <Text style={[styles.statValue, { color: colors.text }]}>
+          {totalStudents}
+        </Text>
+        <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+          Students
+        </Text>
       </View>
-
-      <View style={styles.statsContainer}>
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: colors.text }]}>
-            {totalStudents}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-            Students
-          </Text>
+      <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+        <View style={[styles.statIcon, { backgroundColor: "#e8f5e9" }]}>
+          <Ionicons name="checkmark-circle" size={24} color="#28a745" />
         </View>
-        <View style={styles.divider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: colors.text }]}>
-            {todayAttendance}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-            Present Today
-          </Text>
+        <Text style={[styles.statValue, { color: colors.text }]}>
+          {todayAttendance}
+        </Text>
+        <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+          Present
+        </Text>
+      </View>
+      <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+        <View style={[styles.statIcon, { backgroundColor: "#fff3e0" }]}>
+          <Ionicons name="pie-chart" size={24} color="#ff9800" />
         </View>
-        <View style={styles.divider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: colors.text }]}>
-            {totalStudents > 0
-              ? Math.round((todayAttendance / totalStudents) * 100)
-              : 0}
-            %
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-            Attendance
-          </Text>
-        </View>
+        <Text style={[styles.statValue, { color: colors.text }]}>
+          {totalStudents > 0
+            ? Math.round((todayAttendance / totalStudents) * 100)
+            : 0}
+          %
+        </Text>
+        <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
+          Attendance
+        </Text>
       </View>
     </View>
   );
@@ -244,15 +248,13 @@ export default function TeacherScreen() {
       <Text style={[styles.sectionTitle, { color: colors.text }]}>
         Quick Actions
       </Text>
-      <View style={styles.actionsGrid}>
+      <View style={styles.quickActionsGrid}>
         <TouchableOpacity
           style={[styles.actionButton, { backgroundColor: colors.card }]}
           onPress={handleTakeAttendance}
         >
-          <View
-            style={[styles.actionIcon, { backgroundColor: "#4CAF50" + "20" }]}
-          >
-            <Ionicons name="calendar" size={24} color="#4CAF50" />
+          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
+            <Ionicons name="calendar" size={24} color="#007AFF" />
           </View>
           <Text style={[styles.actionText, { color: colors.text }]}>
             Take Attendance
@@ -263,10 +265,8 @@ export default function TeacherScreen() {
           style={[styles.actionButton, { backgroundColor: colors.card }]}
           onPress={handleRecordAssessment}
         >
-          <View
-            style={[styles.actionIcon, { backgroundColor: "#2196F3" + "20" }]}
-          >
-            <Ionicons name="create" size={24} color="#2196F3" />
+          <View style={[styles.actionIcon, { backgroundColor: "#e6fffa" }]}>
+            <Ionicons name="create" size={24} color="#00C7BE" />
           </View>
           <Text style={[styles.actionText, { color: colors.text }]}>
             Record Assessment
@@ -277,14 +277,24 @@ export default function TeacherScreen() {
           style={[styles.actionButton, { backgroundColor: colors.card }]}
           onPress={handleMessageParents}
         >
-          <View
-            style={[styles.actionIcon, { backgroundColor: "#FF9800" + "20" }]}
-          >
-            <Ionicons name="chatbubbles" size={24} color="#FF9800" />
+          <View style={[styles.actionIcon, { backgroundColor: "#fff0e6" }]}>
+            <Ionicons name="chatbubbles" size={24} color="#FF9500" />
           </View>
           <Text style={[styles.actionText, { color: colors.text }]}>
             Message Parents
           </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={() =>
+            Alert.alert("Coming Soon", "More features coming soon")
+          }
+        >
+          <View style={[styles.actionIcon, { backgroundColor: "#f3e5f5" }]}>
+            <Ionicons name="ellipsis-horizontal" size={24} color="#9c27b0" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>More</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -297,10 +307,12 @@ export default function TeacherScreen() {
           My Students
         </Text>
       </View>
-      
+
       {students.length === 0 ? (
         <View style={[styles.emptyState, { backgroundColor: colors.card }]}>
-          <Text style={[styles.emptyStateText, { color: colors.placeholderText }]}>
+          <Text
+            style={[styles.emptyStateText, { color: colors.placeholderText }]}
+          >
             No students found in your class.
           </Text>
         </View>
@@ -311,14 +323,15 @@ export default function TeacherScreen() {
             style={[styles.studentItem, { backgroundColor: colors.card }]}
           >
             <View
-              style={[
-                styles.studentAvatar,
-                { backgroundColor: colors.border },
-              ]}
+              style={[styles.studentAvatar, { backgroundColor: colors.border }]}
             >
               {student.profile_picture_url ? (
                 // Use Image component here if URL exists
-                <Ionicons name="person" size={20} color={colors.placeholderText} />
+                <Ionicons
+                  name="person"
+                  size={20}
+                  color={colors.placeholderText}
+                />
               ) : (
                 <Text style={[styles.avatarText, { color: colors.text }]}>
                   {student.first_name[0]}
@@ -331,14 +344,11 @@ export default function TeacherScreen() {
                 {student.first_name} {student.last_name}
               </Text>
               <Text
-                style={[
-                  styles.studentId,
-                  { color: colors.placeholderText },
-                ]}
+                style={[styles.studentId, { color: colors.placeholderText }]}
               >
                 ID: {student.student_id}
               </Text>
-            </View>            
+            </View>
           </View>
         ))
       )}
@@ -365,11 +375,15 @@ export default function TeacherScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        style={styles.container}
+        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
         {renderHeader()}
-        {renderClassOverview()}
+        {renderStats()}
         {renderQuickActions()}
         {renderStudentList()}
       </ScrollView>
@@ -381,9 +395,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollContent: {
-    padding: 20,
-  },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -393,7 +404,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
   },
-  header: {
+  headerContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -401,11 +412,15 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: 16,
-    marginBottom: 4,
+    opacity: 0.7,
   },
   teacherName: {
     fontSize: 24,
     fontWeight: "bold",
+  },
+  className: {
+    fontSize: 14,
+    marginTop: 2,
   },
   profileButton: {
     width: 48,
@@ -419,45 +434,30 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  card: {
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 20,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 4,
-  },
-  cardSubtitle: {
-    fontSize: 14,
-  },
-  iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-  },
   statsContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    marginBottom: 24,
   },
-  statItem: {
-    alignItems: "center",
+  statCard: {
     flex: 1,
+    padding: 16,
+    borderRadius: 16,
+    marginHorizontal: 4,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
   },
   statValue: {
     fontSize: 20,
@@ -466,11 +466,6 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 12,
-  },
-  divider: {
-    width: 1,
-    height: 32,
-    backgroundColor: "#E0E0E0",
   },
   section: {
     marginBottom: 24,
@@ -482,28 +477,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  seeAllText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  actionsGrid: {
+  quickActionsGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
-    gap: 12,
   },
   actionButton: {
-    flex: 1,
+    width: "48%",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
+    marginBottom: 16,
     alignItems: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowRadius: 2,
     elevation: 2,
   },
   actionIcon: {
@@ -515,8 +507,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   actionText: {
-    fontSize: 12,
     fontWeight: "600",
+    fontSize: 14,
     textAlign: "center",
   },
   studentItem: {
@@ -525,6 +517,11 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     marginBottom: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   studentAvatar: {
     width: 40,

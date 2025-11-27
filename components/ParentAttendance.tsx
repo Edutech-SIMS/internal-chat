@@ -7,12 +7,13 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
 import { getThemeColors } from "../themes";
+import AbsenceRequestModal from "./AbsenceRequestModal";
 
 interface Student {
   id: string;
@@ -34,9 +35,18 @@ export default function ParentAttendance() {
 
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
-  const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
+  const [attendanceHistory, setAttendanceHistory] = useState<
+    AttendanceRecord[]
+  >([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ present: 0, absent: 0, late: 0, excused: 0, total: 0 });
+  const [stats, setStats] = useState({
+    present: 0,
+    absent: 0,
+    late: 0,
+    excused: 0,
+    total: 0,
+  });
+  const [showAbsenceModal, setShowAbsenceModal] = useState(false);
 
   useEffect(() => {
     if (user?.id && profile?.school_id) {
@@ -88,10 +98,10 @@ export default function ParentAttendance() {
   const fetchAttendanceHistory = async (studentId: string) => {
     try {
       setLoading(true);
-      
+
       console.log("Fetching attendance for student:", studentId);
       console.log("School ID:", profile?.school_id);
-      
+
       const { data: attendanceData, error } = await supabase
         .from("attendance")
         .select("*")
@@ -107,7 +117,6 @@ export default function ParentAttendance() {
 
       setAttendanceHistory(attendanceData || []);
       calculateStats(attendanceData || []);
-
     } catch (error) {
       console.error("Error fetching attendance history:", error);
       Alert.alert("Error", "Failed to load attendance history");
@@ -117,12 +126,18 @@ export default function ParentAttendance() {
   };
 
   const calculateStats = (records: AttendanceRecord[]) => {
-    const newStats = { present: 0, absent: 0, late: 0, excused: 0, total: records.length };
-    records.forEach(record => {
-      if (record.status === 'present') newStats.present++;
-      else if (record.status === 'absent') newStats.absent++;
-      else if (record.status === 'late') newStats.late++;
-      else if (record.status === 'excused') newStats.excused++;
+    const newStats = {
+      present: 0,
+      absent: 0,
+      late: 0,
+      excused: 0,
+      total: records.length,
+    };
+    records.forEach((record) => {
+      if (record.status === "present") newStats.present++;
+      else if (record.status === "absent") newStats.absent++;
+      else if (record.status === "late") newStats.late++;
+      else if (record.status === "excused") newStats.excused++;
     });
     setStats(newStats);
   };
@@ -134,11 +149,16 @@ export default function ParentAttendance() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "present": return "#28a745";
-      case "absent": return "#dc3545";
-      case "late": return "#ffc107";
-      case "excused": return "#6c757d";
-      default: return colors.primary;
+      case "present":
+        return "#28a745";
+      case "absent":
+        return "#dc3545";
+      case "late":
+        return "#ffc107";
+      case "excused":
+        return "#6c757d";
+      default:
+        return colors.primary;
     }
   };
 
@@ -147,7 +167,10 @@ export default function ParentAttendance() {
       style={[
         styles.studentItem,
         { backgroundColor: colors.card, borderColor: colors.border },
-        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+        selectedStudent === item.id && {
+          backgroundColor: colors.primary,
+          borderColor: colors.primary,
+        },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
@@ -167,10 +190,22 @@ export default function ParentAttendance() {
     <View style={[styles.recordCard, { backgroundColor: colors.card }]}>
       <View style={styles.recordHeader}>
         <Text style={[styles.recordDate, { color: colors.text }]}>
-          {new Date(item.date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+          {new Date(item.date).toLocaleDateString(undefined, {
+            weekday: "short",
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })}
         </Text>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '20' }]}>
-          <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+        <View
+          style={[
+            styles.statusBadge,
+            { backgroundColor: getStatusColor(item.status) + "20" },
+          ]}
+        >
+          <Text
+            style={[styles.statusText, { color: getStatusColor(item.status) }]}
+          >
             {item.status.toUpperCase()}
           </Text>
         </View>
@@ -185,7 +220,16 @@ export default function ParentAttendance() {
 
   if (loading && !selectedStudent) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: colors.background,
+            justifyContent: "center",
+            alignItems: "center",
+          },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
@@ -193,17 +237,50 @@ export default function ParentAttendance() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.header, { color: colors.text }]}>Attendance History</Text>
+      <View style={styles.headerRow}>
+        <Text style={[styles.header, { color: colors.text, marginBottom: 0 }]}>
+          Attendance History
+        </Text>
+        <TouchableOpacity
+          style={[styles.requestButton, { backgroundColor: colors.primary }]}
+          onPress={() => setShowAbsenceModal(true)}
+        >
+          <Ionicons name="add-circle-outline" size={20} color="white" />
+          <Text style={styles.requestButtonText}>Request Absence</Text>
+        </TouchableOpacity>
+      </View>
+
+      <AbsenceRequestModal
+        visible={showAbsenceModal}
+        onClose={() => setShowAbsenceModal(false)}
+        students={students.map((s) => ({
+          student_id: s.id,
+          student_name: `${s.first_name} ${s.last_name}`,
+        }))}
+        onSuccess={() => {
+          if (selectedStudent) {
+            fetchAttendanceHistory(selectedStudent);
+          }
+        }}
+      />
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="calendar-outline" size={60} color={colors.placeholderText} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>No students found</Text>
+          <Ionicons
+            name="calendar-outline"
+            size={60}
+            color={colors.placeholderText}
+          />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            No students found
+          </Text>
         </View>
       ) : (
         <View style={{ flex: 1 }}>
           <View style={styles.studentSelector}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Select Student</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              Select Student
+            </Text>
             <FlatList
               data={students}
               horizontal
@@ -217,23 +294,49 @@ export default function ParentAttendance() {
           {/* Stats Summary */}
           <View style={styles.statsContainer}>
             <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <Text style={[styles.statValue, { color: '#28a745' }]}>{stats.present}</Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Present</Text>
+              <Text style={[styles.statValue, { color: "#28a745" }]}>
+                {stats.present}
+              </Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Present
+              </Text>
             </View>
             <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <Text style={[styles.statValue, { color: '#dc3545' }]}>{stats.absent}</Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Absent</Text>
+              <Text style={[styles.statValue, { color: "#dc3545" }]}>
+                {stats.absent}
+              </Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Absent
+              </Text>
             </View>
             <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <Text style={[styles.statValue, { color: '#ffc107' }]}>{stats.late}</Text>
-              <Text style={[styles.statLabel, { color: colors.placeholderText }]}>Late</Text>
+              <Text style={[styles.statValue, { color: "#ffc107" }]}>
+                {stats.late}
+              </Text>
+              <Text
+                style={[styles.statLabel, { color: colors.placeholderText }]}
+              >
+                Late
+              </Text>
             </View>
           </View>
 
-          <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}>Recent Records</Text>
-          
+          <Text
+            style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}
+          >
+            Recent Records
+          </Text>
+
           {loading ? (
-             <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 20 }} />
+            <ActivityIndicator
+              size="large"
+              color={colors.primary}
+              style={{ marginTop: 20 }}
+            />
           ) : (
             <FlatList
               data={attendanceHistory}
@@ -241,7 +344,16 @@ export default function ParentAttendance() {
               renderItem={renderAttendanceRecord}
               contentContainerStyle={styles.listContent}
               ListEmptyComponent={
-                <Text style={[styles.emptyText, { color: colors.placeholderText, textAlign: 'center', marginTop: 20 }]}>
+                <Text
+                  style={[
+                    styles.emptyText,
+                    {
+                      color: colors.placeholderText,
+                      textAlign: "center",
+                      marginTop: 20,
+                    },
+                  ]}
+                >
                   No attendance records found
                 </Text>
               }
@@ -258,10 +370,28 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
   header: {
     fontSize: 24,
     fontWeight: "bold",
-    marginBottom: 20,
+  },
+  requestButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+  },
+  requestButtonText: {
+    color: "white",
+    fontWeight: "600",
+    fontSize: 14,
   },
   emptyContainer: {
     flex: 1,
@@ -295,13 +425,13 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 16,
   },
   statCard: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
     padding: 12,
     borderRadius: 12,
     marginHorizontal: 4,
@@ -354,6 +484,6 @@ const styles = StyleSheet.create({
   notesText: {
     fontSize: 14,
     marginTop: 8,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
 });

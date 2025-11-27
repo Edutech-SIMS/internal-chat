@@ -29,6 +29,7 @@ interface Chat {
 export default function ChatsScreen() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const router = useRouter();
   const { user, profile } = useAuth();
@@ -57,10 +58,10 @@ export default function ChatsScreen() {
     }, [user?.id])
   );
 
-  const fetchChats = async () => {
+  const fetchChats = async (isRefreshing = false) => {
     if (!user?.id || !profile?.school_id) return;
 
-    setLoading(true);
+    if (!isRefreshing) setLoading(true);
 
     try {
       // Get all groups for this user in their school (server-side filter)
@@ -96,7 +97,7 @@ export default function ChatsScreen() {
       const chatsWithMessages = await Promise.all(
         userGroups.map(async (userGroup: any) => {
           const group = userGroup.groups;
-          
+
           const { data: latestMessages, error: messageError } = await supabase
             .from("messages")
             .select(`id, content, created_at`)
@@ -105,7 +106,10 @@ export default function ChatsScreen() {
             .limit(1);
 
           if (messageError) {
-            console.error(`Error fetching latest message for group ${group.id}:`, messageError);
+            console.error(
+              `Error fetching latest message for group ${group.id}:`,
+              messageError
+            );
             return {
               id: group.id,
               name: group.name || "Untitled Group",
@@ -133,7 +137,10 @@ export default function ChatsScreen() {
 
       // Sort chats by last message time
       const sortedChats = chatsWithMessages.sort((a, b) => {
-        return new Date(b.last_message_time).getTime() - new Date(a.last_message_time).getTime();
+        return (
+          new Date(b.last_message_time).getTime() -
+          new Date(a.last_message_time).getTime()
+        );
       });
 
       setChats(sortedChats);
@@ -143,6 +150,12 @@ export default function ChatsScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchChats(true);
+    setRefreshing(false);
   };
 
   const navigateToChat = (chatId: string, chatName: string) => {
@@ -179,7 +192,6 @@ export default function ChatsScreen() {
           <Text style={[styles.headerTitle, isDarkMode && styles.darkText]}>
             Chats
           </Text>
-        
         </View>
 
         {/* Search Bar */}
@@ -228,6 +240,8 @@ export default function ChatsScreen() {
           </View>
         ) : (
           <FlatList
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             data={filteredChats}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (

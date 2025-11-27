@@ -1,14 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
@@ -47,6 +48,7 @@ export default function BillingScreen() {
   const [feeAccount, setFeeAccount] = useState<FeeAccount | null>(null);
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (user?.id && profile?.school_id) {
@@ -54,7 +56,7 @@ export default function BillingScreen() {
     }
   }, [user?.id, profile?.school_id]);
 
-  const fetchParentStudents = async () => {
+  const fetchParentStudents = async (isRefreshing = false) => {
     try {
       const { data: links, error: linksError } = await supabase
         .from("parent_student_links")
@@ -95,10 +97,10 @@ export default function BillingScreen() {
     }
   };
 
-  const fetchBillingData = async (studentId: string) => {
+  const fetchBillingData = async (studentId: string, isRefreshing = false) => {
     try {
-      setLoading(true);
-      
+      if (!isRefreshing) setLoading(true);
+
       // Fetch fee account
       const { data: accountData, error: accountError } = await supabase
         .from("fee_accounts")
@@ -121,13 +123,22 @@ export default function BillingScreen() {
 
       if (billsError) throw billsError;
       setBills(billsData || []);
-
     } catch (error) {
       console.error("Error fetching billing data:", error);
       Alert.alert("Error", "Failed to load billing information");
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    if (selectedStudent) {
+      await fetchBillingData(selectedStudent, true);
+    } else {
+      await fetchParentStudents(true);
+    }
+    setRefreshing(false);
   };
 
   const handleStudentSelect = (studentId: string) => {
@@ -144,7 +155,10 @@ export default function BillingScreen() {
       style={[
         styles.studentItem,
         { backgroundColor: colors.card, borderColor: colors.border },
-        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+        selectedStudent === item.id && {
+          backgroundColor: colors.primary,
+          borderColor: colors.primary,
+        },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
@@ -164,7 +178,9 @@ export default function BillingScreen() {
     <View style={[styles.billCard, { backgroundColor: colors.card }]}>
       <View style={styles.billHeader}>
         <View>
-          <Text style={[styles.billNumber, { color: colors.text }]}>{item.bill_number}</Text>
+          <Text style={[styles.billNumber, { color: colors.text }]}>
+            {item.bill_number}
+          </Text>
           <Text style={[styles.billDate, { color: colors.placeholderText }]}>
             Due: {new Date(item.due_date).toLocaleDateString()}
           </Text>
@@ -173,14 +189,21 @@ export default function BillingScreen() {
           <Text style={[styles.billAmount, { color: colors.text }]}>
             {formatCurrency(item.total_amount)}
           </Text>
-          <View style={[
-            styles.statusBadge,
-            { backgroundColor: item.status === 'paid' ? '#4CAF50' + '20' : '#F44336' + '20' }
-          ]}>
-            <Text style={[
-              styles.statusText,
-              { color: item.status === 'paid' ? '#4CAF50' : '#F44336' }
-            ]}>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor:
+                  item.status === "paid" ? "#4CAF50" + "20" : "#F44336" + "20",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusText,
+                { color: item.status === "paid" ? "#4CAF50" : "#F44336" },
+              ]}
+            >
               {item.status.toUpperCase()}
             </Text>
           </View>
@@ -191,27 +214,54 @@ export default function BillingScreen() {
 
   if (loading && !selectedStudent) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+      <SafeAreaView
+        style={[
+          styles.container,
+          {
+            backgroundColor: colors.background,
+            justifyContent: "center",
+            alignItems: "center",
+          },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }]}
+    >
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Billing & Fees</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>
+          Billing & Fees
+        </Text>
       </View>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="wallet-outline" size={60} color={colors.placeholderText} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>No students found</Text>
+          <Ionicons
+            name="wallet-outline"
+            size={60}
+            color={colors.placeholderText}
+          />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            No students found
+          </Text>
         </View>
       ) : (
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
           <View style={styles.studentSelector}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Select Student</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              Select Student
+            </Text>
             <FlatList
               data={students}
               horizontal
@@ -223,30 +273,70 @@ export default function BillingScreen() {
           </View>
 
           {loading ? (
-            <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+            <ActivityIndicator
+              size="large"
+              color={colors.primary}
+              style={{ marginTop: 40 }}
+            />
           ) : (
             <>
               {feeAccount && (
-                <View style={[styles.balanceCard, { backgroundColor: colors.card }]}>
-                  <Text style={[styles.balanceLabel, { color: colors.placeholderText }]}>Current Balance</Text>
-                  <Text style={[
-                    styles.balanceAmount,
-                    { color: feeAccount.current_balance > 0 ? '#F44336' : '#4CAF50' }
-                  ]}>
+                <View
+                  style={[styles.balanceCard, { backgroundColor: colors.card }]}
+                >
+                  <Text
+                    style={[
+                      styles.balanceLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Current Balance
+                  </Text>
+                  <Text
+                    style={[
+                      styles.balanceAmount,
+                      {
+                        color:
+                          feeAccount.current_balance > 0
+                            ? "#F44336"
+                            : "#4CAF50",
+                      },
+                    ]}
+                  >
                     {formatCurrency(feeAccount.current_balance)}
                   </Text>
                   <View style={styles.balanceRow}>
-                    <Text style={[styles.balanceSubtext, { color: colors.placeholderText }]}>
-                      Opening Balance: {formatCurrency(feeAccount.opening_balance)}
+                    <Text
+                      style={[
+                        styles.balanceSubtext,
+                        { color: colors.placeholderText },
+                      ]}
+                    >
+                      Opening Balance:{" "}
+                      {formatCurrency(feeAccount.opening_balance)}
                     </Text>
-                    <View style={[
-                      styles.accountStatusBadge,
-                      { backgroundColor: feeAccount.status === 'active' ? '#4CAF50' + '20' : '#FF9800' + '20' }
-                    ]}>
-                      <Text style={[
-                        styles.accountStatusText,
-                        { color: feeAccount.status === 'active' ? '#4CAF50' : '#FF9800' }
-                      ]}>
+                    <View
+                      style={[
+                        styles.accountStatusBadge,
+                        {
+                          backgroundColor:
+                            feeAccount.status === "active"
+                              ? "#4CAF50" + "20"
+                              : "#FF9800" + "20",
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.accountStatusText,
+                          {
+                            color:
+                              feeAccount.status === "active"
+                                ? "#4CAF50"
+                                : "#FF9800",
+                          },
+                        ]}
+                      >
                         {feeAccount.status.toUpperCase()}
                       </Text>
                     </View>
@@ -255,16 +345,23 @@ export default function BillingScreen() {
               )}
 
               <View style={styles.billsSection}>
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Bills</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                  Recent Bills
+                </Text>
                 {bills.length > 0 ? (
-                  bills.map(bill => (
+                  bills.map((bill) => (
                     <View key={bill.id} style={{ marginBottom: 12 }}>
                       {renderBill({ item: bill })}
                     </View>
                   ))
                 ) : (
                   <View style={styles.noBillsContainer}>
-                    <Text style={[styles.noBillsText, { color: colors.placeholderText }]}>
+                    <Text
+                      style={[
+                        styles.noBillsText,
+                        { color: colors.placeholderText },
+                      ]}
+                    >
                       No billing history found
                     </Text>
                   </View>

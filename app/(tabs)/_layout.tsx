@@ -39,7 +39,7 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
+        headerShown: false,
         headerStyle: {
           backgroundColor: colors.primary,
         },
@@ -52,6 +52,22 @@ export default function TabLayout() {
         tabBarStyle: tabBarStyle,
       }}
     >
+      {/* Admin Dashboard - First for admins */}
+      <Tabs.Screen
+        name="admin"
+        options={{
+          title: "Dashboard",
+          href: isAdminUser ? "/admin" : null,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "grid" : "grid-outline"}
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+
       {/* Parent-specific tabs */}
       <Tabs.Screen
         name="parent"
@@ -134,21 +150,6 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="users"
-        options={{
-          title: "Users",
-          href: isAdminUser ? "/users" : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? "person" : "person-outline"}
-              size={size}
-              color={color}
-            />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
         name="groups"
         options={{
           title: "Groups",
@@ -166,7 +167,6 @@ export default function TabLayout() {
       {/* Settings Tab - Available to all users */}
       <Tabs.Screen
         name="settings"
-        
         options={{
           title: "Settings",
           tabBarIcon: ({ color, size, focused }) => (

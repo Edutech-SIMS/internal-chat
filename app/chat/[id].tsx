@@ -1,24 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { canSendMessages } from "lib/message-permissions";
 import { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import EmojiSelector, { Categories } from "react-native-emoji-selector";
 import { useAuth } from "../../contexts/AuthContext";
@@ -38,6 +39,16 @@ interface Message {
   };
 }
 
+interface GroupMember {
+  id: string;
+  user_id: string;
+  joined_at: string;
+  profiles: {
+    full_name: string | null;
+    email: string | null;
+  } | null;
+}
+
 export default function ChatScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
@@ -45,6 +56,7 @@ export default function ChatScreen() {
   const [newMessage, setNewMessage] = useState("");
   const [infoVisible, setInfoVisible] = useState(false);
   const [groupInfo, setGroupInfo] = useState<any>(null);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [canSend, setCanSend] = useState(false);
   const [checkingPermission, setCheckingPermission] = useState(true);
   const [isAnnouncementGroup, setIsAnnouncementGroup] = useState(false);
@@ -83,6 +95,7 @@ export default function ChatScreen() {
   useEffect(() => {
     if (infoVisible) {
       fetchGroupInfo();
+      fetchGroupMembers();
     }
   }, [infoVisible]);
 
@@ -173,7 +186,7 @@ export default function ChatScreen() {
       // Optimization: Pass group object if available to avoid re-fetching in canSendMessages if we could modify it,
       // but canSendMessages signature is (chatId, userId).
       // We can at least avoid the second fetch for is_announcement below.
-      
+
       const hasPermission = await canSendMessages(chatId, profile.user_id);
       setCanSend(hasPermission);
 
@@ -203,7 +216,7 @@ export default function ChatScreen() {
       .eq("id", chatId)
       .eq("school_id", schoolId)
       .single();
-      
+
     if (error) {
       console.error("Error fetching group info:", error);
       return null;
@@ -214,9 +227,41 @@ export default function ChatScreen() {
     }
   };
 
+  const fetchGroupMembers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("group_members")
+        .select(
+          `
+        id,
+        user_id,
+        joined_at,
+        profiles (
+          full_name,
+          email
+        )
+      `
+        )
+        .eq("group_id", chatId);
+
+      if (error) throw error;
+
+      const members = (data || []).map((member: any) => ({
+        ...member,
+        profiles: Array.isArray(member.profiles)
+          ? member.profiles[0]
+          : member.profiles,
+      }));
+
+      setGroupMembers(members);
+    } catch (error) {
+      console.error("Error fetching group members:", error);
+    }
+  };
+
   const fetchMessages = async (isInitial = false) => {
     if (!user) return;
-    
+
     if (isInitial) {
       setMessages([]);
       setHasMoreMessages(true);
@@ -253,12 +298,14 @@ export default function ChatScreen() {
       if (error) {
         console.error("Error fetching messages:", error);
       } else {
-        const newMessages = (data || []).map((msg: any) => ({
-          ...msg,
-          profiles: Array.isArray(msg.profiles)
-            ? msg.profiles[0]
-            : msg.profiles,
-        })).reverse(); // Reverse to chronological order
+        const newMessages = (data || [])
+          .map((msg: any) => ({
+            ...msg,
+            profiles: Array.isArray(msg.profiles)
+              ? msg.profiles[0]
+              : msg.profiles,
+          }))
+          .reverse(); // Reverse to chronological order
 
         if (data.length < 50) {
           setHasMoreMessages(false);
@@ -279,7 +326,6 @@ export default function ChatScreen() {
     }
   };
 
-
   const sendMessage = async () => {
     if (!newMessage.trim() || sending) return;
 
@@ -295,14 +341,18 @@ export default function ChatScreen() {
     handleTyping(false);
 
     // Insert the message
-    const { error } = await supabase.from("messages").insert([
-      {
-        content: newMessage,
-        user_id: profile?.user_id, // Use profile.user_id instead of user.id to match foreign key constraint
-        group_id: chatId,
-        school_id: schoolId,
-      },
-    ]);
+    const { data: newMessageData, error } = await supabase
+      .from("messages")
+      .insert([
+        {
+          content: newMessage,
+          user_id: profile?.user_id, // Use profile.user_id instead of user.id to match foreign key constraint
+          group_id: chatId,
+          school_id: schoolId,
+        },
+      ])
+      .select("*, profiles(full_name, email)")
+      .single();
 
     if (error) {
       Alert.alert("Error", error.message);
@@ -310,6 +360,18 @@ export default function ChatScreen() {
       setSending(false);
       return;
     }
+
+    // Optimistically update messages
+    const formattedMessage = {
+      ...newMessageData,
+      profiles: Array.isArray(newMessageData.profiles)
+        ? newMessageData.profiles[0]
+        : newMessageData.profiles,
+    };
+
+    setMessages((prev) => [...prev, formattedMessage]);
+    setNewMessage("");
+    setSending(false);
 
     try {
       // Trigger push notifications via Edge Function
@@ -333,10 +395,6 @@ export default function ChatScreen() {
     } catch (err) {
       console.error("Push notification failed:", err);
     }
-
-    setNewMessage("");
-    fetchMessages();
-    setSending(false);
   };
 
   const handleEmojiSelect = (emoji: string) => {
@@ -730,189 +788,158 @@ export default function ChatScreen() {
         <Modal
           visible={infoVisible}
           animationType="slide"
-          transparent={true}
+          presentationStyle="pageSheet"
           onRequestClose={() => setInfoVisible(false)}
         >
-          <SafeAreaView
-            style={[
-              styles.modalOverlay,
-              {
-                backgroundColor: isDarkMode
-                  ? "rgba(0, 0, 0, 0.8)"
-                  : "rgba(0, 0, 0, 0.4)",
-              },
-            ]}
+          <View
+            style={[styles.modalContainer, { backgroundColor: colors.card }]}
           >
             <View
-              style={[styles.modalContainer, { backgroundColor: colors.card }]}
+              style={[styles.modalHeader, { borderBottomColor: colors.border }]}
             >
-              <View style={styles.modalHandle} />
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                Group Info
+              </Text>
+              <TouchableOpacity onPress={() => setInfoVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
 
-              <View style={styles.modalHeader}>
-                <View style={styles.modalTitleContainer}>
-                  <Ionicons
-                    name="information-circle"
-                    size={24}
-                    color={colors.primary}
-                  />
-                  <Text style={[styles.modalTitle, { color: colors.text }]}>
-                    Group Info
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setInfoVisible(false)}
-                  style={styles.modalCloseButton}
-                >
-                  <Ionicons name="close" size={24} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-
+            {groupInfo ? (
               <ScrollView
                 style={styles.modalContent}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 20 }}
               >
-                {groupInfo ? (
-                  <>
-                    <View
+                <View style={styles.groupHeaderSection}>
+                  <View
+                    style={[
+                      styles.groupIconLarge,
+                      { backgroundColor: colors.primary + "20" },
+                    ]}
+                  >
+                    <Ionicons
+                      name={groupInfo.is_announcement ? "megaphone" : "people"}
+                      size={40}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <Text style={[styles.groupNameLarge, { color: colors.text }]}>
+                    {groupInfo.name}
+                  </Text>
+                  {groupInfo.description && (
+                    <Text
                       style={[
-                        styles.infoCard,
-                        { backgroundColor: colors.background },
+                        styles.groupDescription,
+                        { color: colors.placeholderText },
                       ]}
                     >
+                      {groupInfo.description}
+                    </Text>
+                  )}
+                  <View style={styles.groupMetaRow}>
+                    <View style={styles.metaItem}>
+                      <Ionicons
+                        name="calendar-outline"
+                        size={14}
+                        color={colors.placeholderText}
+                      />
                       <Text
                         style={[
-                          styles.infoItemTitle,
+                          styles.metaText,
                           { color: colors.placeholderText },
                         ]}
                       >
-                        Group Name
-                      </Text>
-                      <Text
-                        style={[styles.infoItemValue, { color: colors.text }]}
-                      >
-                        {groupInfo.name}
-                      </Text>
-                    </View>
-
-                    {groupInfo.description && (
-                      <View
-                        style={[
-                          styles.infoCard,
-                          { backgroundColor: colors.background },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.infoItemTitle,
-                            { color: colors.placeholderText },
-                          ]}
-                        >
-                          Description
-                        </Text>
-                        <Text
-                          style={[styles.infoItemValue, { color: colors.text }]}
-                        >
-                          {groupInfo.description}
-                        </Text>
-                      </View>
-                    )}
-
-                    <View
-                      style={[
-                        styles.infoCard,
-                        { backgroundColor: colors.background },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.infoItemTitle,
-                          { color: colors.placeholderText },
-                        ]}
-                      >
-                        Type
-                      </Text>
-                      <View style={styles.typeContainer}>
-                        <Ionicons
-                          name={
-                            groupInfo.is_announcement
-                              ? "megaphone"
-                              : "chatbubbles"
-                          }
-                          size={16}
-                          color={
-                            groupInfo.is_announcement
-                              ? "#FF6B35"
-                              : colors.primary
-                          }
-                        />
-                        <Text
-                          style={[styles.infoItemValue, { color: colors.text }]}
-                        >
-                          {groupInfo.is_announcement
-                            ? "Announcements"
-                            : "Public chat"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View
-                      style={[
-                        styles.infoCard,
-                        { backgroundColor: colors.background },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.infoItemTitle,
-                          { color: colors.placeholderText },
-                        ]}
-                      >
-                        Created
-                      </Text>
-                      <Text
-                        style={[styles.infoItemValue, { color: colors.text }]}
-                      >
+                        Created{" "}
                         {new Date(groupInfo.created_at).toLocaleDateString()}
                       </Text>
                     </View>
+                    <View style={styles.metaItem}>
+                      <Ionicons
+                        name={
+                          groupInfo.is_announcement
+                            ? "megaphone-outline"
+                            : "chatbubbles-outline"
+                        }
+                        size={14}
+                        color={colors.placeholderText}
+                      />
+                      <Text
+                        style={[
+                          styles.metaText,
+                          { color: colors.placeholderText },
+                        ]}
+                      >
+                        {groupInfo.is_announcement
+                          ? "Announcement"
+                          : "Public Chat"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
 
-                    {groupInfo.is_announcement && !canSend && (
-                      <View style={styles.readOnlyNotice}>
-                        <Ionicons
-                          name="lock-closed"
-                          size={16}
-                          color="#FF6B35"
-                        />
-                        <Text style={styles.readOnlyText}>
-                          You have read-only access to this group
+                <View style={styles.membersSection}>
+                  <Text
+                    style={[
+                      styles.sectionTitle,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Members ({groupMembers.length})
+                  </Text>
+                  {groupMembers.map((member) => (
+                    <View
+                      key={member.id}
+                      style={[
+                        styles.memberItem,
+                        { borderBottomColor: colors.border },
+                      ]}
+                    >
+                      <View style={styles.memberAvatar}>
+                        <Text style={styles.memberAvatarText}>
+                          {getInitials(
+                            member.profiles?.full_name ||
+                              member.profiles?.email ||
+                              "?"
+                          )}
                         </Text>
                       </View>
-                    )}
-                  </>
-                ) : (
-                  <View style={styles.modalLoading}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text
-                      style={[styles.modalLoadingText, { color: colors.text }]}
-                    >
-                      Loading group info...
-                    </Text>
-                  </View>
-                )}
+                      <View style={styles.memberInfo}>
+                        <Text
+                          style={[styles.memberName, { color: colors.text }]}
+                        >
+                          {member.profiles?.full_name ||
+                            member.profiles?.email ||
+                            "Unknown User"}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.memberEmail,
+                            { color: colors.placeholderText },
+                          ]}
+                        >
+                          {member.profiles?.email && member.profiles?.full_name
+                            ? member.profiles.email
+                            : ""}
+                        </Text>
+                      </View>
+                      {member.user_id === groupInfo.created_by && (
+                        <View style={styles.adminBadge}>
+                          <Text style={styles.adminBadgeText}>Admin</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
               </ScrollView>
-
-              <TouchableOpacity
-                style={[
-                  styles.modalCloseButtonLarge,
-                  { backgroundColor: colors.primary },
-                ]}
-                onPress={() => setInfoVisible(false)}
-              >
-                <Text style={styles.modalCloseButtonText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </SafeAreaView>
+            ) : (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={[styles.modalLoadingText, { color: colors.text }]}>
+                  Loading group info...
+                </Text>
+              </View>
+            )}
+          </View>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -987,7 +1014,6 @@ const styles = StyleSheet.create({
   },
   messageContainer: {
     flex: 1,
-    padding: 16,
   },
   emptyContainer: {
     flex: 1,
@@ -1144,32 +1170,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
   modalContainer: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    flex: 1,
+    paddingTop: 20,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === "ios" ? 20 : 10,
-    maxHeight: height * 0.85,
-    minHeight: height * 0.4,
-  },
-  modalHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginTop: 8,
-    marginBottom: 20,
-    backgroundColor: "#E5E5E7",
+    paddingBottom: 40,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    marginBottom: 16,
   },
   modalTitleContainer: {
     flexDirection: "row",
@@ -1177,7 +1190,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "600",
+    fontWeight: "bold",
     marginLeft: 8,
   },
   modalCloseButton: {
@@ -1272,5 +1285,93 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "600",
+  },
+  groupHeaderSection: {
+    alignItems: "center",
+    paddingVertical: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E5E7",
+  },
+  groupIconLarge: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  groupNameLarge: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  groupDescription: {
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 16,
+    paddingHorizontal: 32,
+  },
+  groupMetaRow: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  metaText: {
+    fontSize: 14,
+  },
+  membersSection: {
+    padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    marginBottom: 12,
+  },
+  memberItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  memberAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#E5E5E7",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  memberAvatarText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#666",
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  memberEmail: {
+    fontSize: 14,
+  },
+  adminBadge: {
+    backgroundColor: "#E5E5E7",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  adminBadgeText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#666",
   },
 });

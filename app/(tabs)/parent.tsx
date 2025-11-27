@@ -1,6 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import ParentAssessmentHistory from "../../components/ParentAssessmentHistory";
 import ParentAttendance from "../../components/ParentAttendance";
 import ParentDashboard from "../../components/ParentDashboard";
@@ -18,7 +25,7 @@ export default function ParentScreen() {
   const renderContent = () => {
     switch (activeTab) {
       case "dashboard":
-        return <ParentDashboard />;
+        return <ParentDashboard onNavigate={setActiveTab} />;
       case "transport":
         return <ParentTransport />;
       case "assessment":
@@ -26,7 +33,7 @@ export default function ParentScreen() {
       case "attendance":
         return <ParentAttendance />;
       default:
-        return <ParentDashboard />;
+        return <ParentDashboard onNavigate={setActiveTab} />;
     }
   };
 
@@ -38,18 +45,22 @@ export default function ParentScreen() {
   ];
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }]}
+    >
       <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>My Children</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>
+          My Children
+        </Text>
       </View>
 
       <View style={styles.tabWrapper}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          style={[styles.tabContainer, { backgroundColor: isDarkMode ? colors.card : "#f0f0f0" }]}
-          contentContainerStyle={styles.tabContentContainer}
+        <View
+          style={[
+            styles.tabContainer,
+            { backgroundColor: isDarkMode ? colors.card : "#f0f0f0" },
+          ]}
         >
           {tabs.map((tab) => (
             <TouchableOpacity
@@ -70,22 +81,30 @@ export default function ParentScreen() {
             >
               <Ionicons
                 name={tab.icon as any}
-                size={18}
-                color={activeTab === tab.id ? colors.primary : colors.placeholderText}
-                style={{ marginRight: 6 }}
+                size={16}
+                color={
+                  activeTab === tab.id ? colors.primary : colors.placeholderText
+                }
+                style={{ marginBottom: 4 }}
               />
               <Text
                 style={[
                   styles.tabText,
-                  { color: activeTab === tab.id ? colors.text : colors.placeholderText },
+                  {
+                    color:
+                      activeTab === tab.id
+                        ? colors.text
+                        : colors.placeholderText,
+                  },
                   activeTab === tab.id && styles.activeTabText,
                 ]}
+                numberOfLines={1}
               >
                 {tab.label}
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
       </View>
 
       <View style={styles.content}>{renderContent()}</View>
@@ -113,21 +132,19 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     borderRadius: 12,
     padding: 4,
-  },
-  tabContentContainer: {
-    paddingRight: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   tab: {
-    flexDirection: "row",
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 4,
     borderRadius: 10,
-    marginRight: 8,
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "600",
   },
   activeTabText: {

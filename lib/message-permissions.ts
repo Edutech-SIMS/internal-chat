@@ -34,11 +34,20 @@ export const canSendMessages = async (
     }
 
     // For announcement groups, check permissions
+    // First get the profile ID for the user
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .single();
+
+    if (!profile) return false;
+
     const { data: permission } = await supabase
       .from("group_message_permissions")
       .select("can_send_messages")
       .eq("group_id", groupId)
-      .eq("user_id", userId)
+      .eq("user_id", profile.id) // Use Profile ID
       .single();
 
     return permission?.can_send_messages || false;

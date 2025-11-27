@@ -4,10 +4,12 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -36,15 +38,24 @@ interface Assessment {
   type: string;
 }
 
-export default function ParentDashboard() {
+interface ParentDashboardProps {
+  onNavigate: (
+    tab: "dashboard" | "transport" | "assessment" | "attendance"
+  ) => void;
+}
+
+export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
   const { user, profile } = useAuth();
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
-  
+
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(
+    null
+  );
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (user?.id && profile?.school_id) {
@@ -52,12 +63,14 @@ export default function ParentDashboard() {
     }
   }, [user?.id, profile?.school_id]);
 
-  const fetchParentStudents = async () => {
+  const fetchParentStudents = async (isRefreshing = false) => {
     try {
+      if (!isRefreshing) setLoading(true);
       // Optimized: Fetch students with nested assessment data in a single query
       const { data: parentLinks, error: linksError } = await supabase
         .from("parent_student_links")
-        .select(`
+        .select(
+          `
           student_id,
           students!inner (
             id,
@@ -80,12 +93,13 @@ export default function ParentDashboard() {
               status
             )
           )
-        `)
+        `
+        )
         .eq("parent_user_id", user?.id)
         .eq("school_id", profile?.school_id)
-        .order("created_at", { 
-          foreignTable: "students.assessment_results", 
-          ascending: false 
+        .order("created_at", {
+          foreignTable: "students.assessment_results",
+          ascending: false,
         })
         .limit(5, { foreignTable: "students.assessment_results" });
 
@@ -108,15 +122,14 @@ export default function ParentDashboard() {
           const presentCount = attendanceRecords.filter(
             (a: any) => a.status === "present"
           ).length;
-          const attendanceRate = totalDays > 0 
-            ? Math.round((presentCount / totalDays) * 100) 
-            : 0;
+          const attendanceRate =
+            totalDays > 0 ? Math.round((presentCount / totalDays) * 100) : 0;
 
           return {
             ...student,
             attendanceRate,
             totalDays,
-            presentCount
+            presentCount,
           };
         })
         .filter(Boolean);
@@ -128,16 +141,17 @@ export default function ParentDashboard() {
         setSelectedStudentId(studentsData[0].id);
         // Extract assessments for the first student
         if (studentsData[0].assessment_results) {
-          const transformedAssessments: Assessment[] = studentsData[0].assessment_results
-            .slice(0, 5) // Take only first 5
-            .map((assessment: any) => ({
-              id: assessment.id,
-              subject: assessment.assessment_types?.name || "Unknown Subject",
-              score: assessment.marks_obtained || 0,
-              grade: assessment.grade || "N/A",
-              date: assessment.created_at,
-              type: "Assessment",
-            }));
+          const transformedAssessments: Assessment[] =
+            studentsData[0].assessment_results
+              .slice(0, 5) // Take only first 5
+              .map((assessment: any) => ({
+                id: assessment.id,
+                subject: assessment.assessment_types?.name || "Unknown Subject",
+                score: assessment.marks_obtained || 0,
+                grade: assessment.grade || "N/A",
+                date: assessment.created_at,
+                type: "Assessment",
+              }));
 
           setAssessments(transformedAssessments);
         }
@@ -148,6 +162,12 @@ export default function ParentDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchParentStudents(true);
+    setRefreshing(false);
   };
 
   const fetchStudentAssessments = async (studentId: string) => {
@@ -182,7 +202,7 @@ export default function ParentDashboard() {
             assessment.assessment_types.length > 0
               ? assessment.assessment_types[0].name
               : "Unknown Subject",
-              score: assessment.marks_obtained || 0,
+          score: assessment.marks_obtained || 0,
           grade: assessment.grade || "N/A",
           date: assessment.created_at,
           type: "Assessment",
@@ -197,14 +217,17 @@ export default function ParentDashboard() {
     }
   };
 
-  const renderStudent = ({ item }: { item: Student }) => (
+  const renderStudent = (item: Student) => (
     <TouchableOpacity
+      key={item.id}
       style={[
-        styles.studentCard, 
+        styles.studentCard,
         { backgroundColor: colors.card },
-        selectedStudentId === item.id && { 
-          backgroundColor: isDarkMode ? '#1a2a3a' : '#f0f7ff'
-        }
+        selectedStudentId === item.id && {
+          backgroundColor: isDarkMode ? "#1a2a3a" : "#f0f7ff",
+          borderColor: colors.primary,
+          borderWidth: 1,
+        },
       ]}
       onPress={() => fetchStudentAssessments(item.id)}
     >
@@ -221,9 +244,16 @@ export default function ParentDashboard() {
         <View style={styles.attendanceContainer}>
           <View style={styles.attendanceBadge}>
             <Ionicons name="stats-chart" size={12} color="#007AFF" />
-            <Text style={styles.attendanceText}>{item.attendanceRate}% Attendance</Text>
+            <Text style={styles.attendanceText}>
+              {item.attendanceRate}% Attendance
+            </Text>
           </View>
-          <Text style={[styles.studentId, { color: colors.placeholderText, marginLeft: 8 }]}>
+          <Text
+            style={[
+              styles.studentId,
+              { color: colors.placeholderText, marginLeft: 8 },
+            ]}
+          >
             ID: {item.student_id}
           </Text>
         </View>
@@ -237,11 +267,15 @@ export default function ParentDashboard() {
   const renderAssessment = ({ item }: { item: Assessment }) => (
     <View style={[styles.assessmentItem, { backgroundColor: colors.card }]}>
       <View style={styles.assessmentHeader}>
-        <Text style={[styles.subjectName, { color: colors.text }]}>{item.subject}</Text>
+        <Text style={[styles.subjectName, { color: colors.text }]}>
+          {item.subject}
+        </Text>
         <Text style={styles.assessmentType}>{item.type}</Text>
       </View>
       <View style={styles.assessmentDetails}>
-        <Text style={[styles.score, { color: colors.placeholderText }]}>Score: {item.score}%</Text>
+        <Text style={[styles.score, { color: colors.placeholderText }]}>
+          Score: {item.score}%
+        </Text>
         <Text style={[styles.grade, getGradeStyle(item.grade)]}>
           {item.grade}
         </Text>
@@ -277,42 +311,127 @@ export default function ParentDashboard() {
     </View>
   );
 
+  const renderQuickActions = () => (
+    <View style={styles.quickActionsContainer}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>
+        Quick Actions
+      </Text>
+      <View style={styles.quickActionsGrid}>
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={() => onNavigate("attendance")}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
+            <Ionicons name="calendar" size={24} color="#007AFF" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Attendance
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={() => onNavigate("transport")}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: "#fff0e6" }]}>
+            <Ionicons name="bus" size={24} color="#FF9500" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Transport
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={() => onNavigate("assessment")}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: "#e6fffa" }]}>
+            <Ionicons name="clipboard" size={24} color="#00C7BE" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Reports
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: colors.card }]}
+          onPress={() => onNavigate("billing" as any)}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: "#f0e6ff" }]}>
+            <Ionicons name="card" size={24} color="#AF52DE" />
+          </View>
+          <Text style={[styles.actionText, { color: colors.text }]}>
+            Pay Fees
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: colors.background,
+            justifyContent: "center",
+            alignItems: "center",
+          },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={{ marginTop: 10, color: colors.text }}>Loading parent dashboard...</Text>
+        <Text style={{ marginTop: 10, color: colors.text }}>
+          Loading parent dashboard...
+        </Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={{ paddingBottom: 40 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
       {renderHeader()}
-      <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 10 }]}>My Children</Text>
+
+      {renderQuickActions()}
+
+      <Text
+        style={[styles.sectionTitle, { color: colors.text, marginTop: 20 }]}
+      >
+        My Children
+      </Text>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="person-outline" size={60} color={colors.placeholderText} />
+          <Ionicons
+            name="person-outline"
+            size={60}
+            color={colors.placeholderText}
+          />
           <Text style={[styles.emptyText, { color: colors.text }]}>
             No students linked to your account
           </Text>
-          <Text style={[styles.emptySubtext, { color: colors.placeholderText }]}>
+          <Text
+            style={[styles.emptySubtext, { color: colors.placeholderText }]}
+          >
             Contact school administration to link your children
           </Text>
         </View>
       ) : (
         <>
-          <FlatList
-            data={students}
-            keyExtractor={(item) => item.id}
-            renderItem={renderStudent}
-            style={styles.studentList}
-          />
+          <View style={styles.studentList}>{students.map(renderStudent)}</View>
 
           {assessments.length > 0 && (
             <View style={styles.assessmentsSection}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Assessments</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                Recent Assessments
+              </Text>
               <FlatList
                 data={assessments}
                 keyExtractor={(item) => item.id}
@@ -324,7 +443,7 @@ export default function ParentDashboard() {
           )}
         </>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -359,13 +478,72 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  header: {
-    fontSize: 24,
+  quickActionsContainer: {
+    marginBottom: 24,
+  },
+  quickActionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  actionButton: {
+    width: "48%",
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  actionText: {
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  eventsSection: {
+    marginBottom: 24,
+  },
+  eventsScroll: {
+    flexDirection: "row",
+  },
+  eventCard: {
+    padding: 16,
+    borderRadius: 12,
+    marginRight: 12,
+    width: 140,
+    borderLeftWidth: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  eventDate: {
+    fontSize: 14,
     fontWeight: "bold",
-    marginBottom: 20,
+    marginBottom: 4,
+  },
+  eventTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 12,
   },
   studentList: {
-    flex: 1,
+    marginBottom: 16,
   },
   studentCard: {
     flexDirection: "row",
@@ -379,7 +557,7 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: "transparent",
   },
   studentAvatar: {
     width: 50,
@@ -405,10 +583,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   emptyContainer: {
-    flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
+    marginTop: 20,
   },
   emptyText: {
     fontSize: 18,
@@ -421,12 +599,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   assessmentsSection: {
-    marginTop: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 12,
+    marginTop: 10,
   },
   assessmentItem: {
     borderRadius: 12,
