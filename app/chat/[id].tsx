@@ -73,6 +73,14 @@ export default function ChatScreen() {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textInputRef = useRef<TextInput>(null);
 
+  // Check if current user is admin/creator of the group
+  const isGroupAdmin =
+    groupInfo?.created_by === profile?.user_id ||
+    (profile?.roles &&
+      profile.roles.some(
+        (role: any) => role.role === "admin" || role.role === "superadmin"
+      ));
+
   const chatId = params.id as string;
   const chatName = params.name || (params.email as string);
 
@@ -212,7 +220,7 @@ export default function ChatScreen() {
   const fetchGroupInfo = async () => {
     const { data, error } = await supabase
       .from("groups")
-      .select("id, name, description, created_at, is_announcement")
+      .select("id, name, description, created_at, is_announcement, created_by")
       .eq("id", chatId)
       .eq("school_id", schoolId)
       .single();
@@ -930,6 +938,105 @@ export default function ChatScreen() {
                     </View>
                   ))}
                 </View>
+
+                {/* Group Controls Section - Only visible to group admin */}
+                {isGroupAdmin && (
+                  <View style={styles.groupControlsSection}>
+                    <Text
+                      style={[
+                        styles.sectionTitle,
+                        { color: colors.placeholderText },
+                      ]}
+                    >
+                      Group Controls
+                    </Text>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.controlButton,
+                        { backgroundColor: colors.border },
+                      ]}
+                      onPress={() => {
+                        // Route to group management page
+                        setInfoVisible(false);
+                        router.push({
+                          pathname: "/(tabs)/groups",
+                          params: { groupId: chatId },
+                        });
+                      }}
+                    >
+                      <View style={styles.controlButtonContent}>
+                        <Ionicons
+                          name="settings"
+                          size={20}
+                          color={colors.text}
+                        />
+                        <Text
+                          style={[
+                            styles.controlButtonText,
+                            { color: colors.text },
+                          ]}
+                        >
+                          Manage Group
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={20}
+                        color={colors.placeholderText}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Leave Group Button - Visible to all members except creator */}
+                {groupInfo?.created_by !== profile?.user_id && (
+                  <TouchableOpacity
+                    style={[styles.leaveButton]}
+                    onPress={() => {
+                      Alert.alert(
+                        "Leave Group",
+                        "Are you sure you want to leave this group?",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Leave",
+                            style: "destructive",
+                            onPress: async () => {
+                              try {
+                                // Remove user from group
+                                const { error } = await supabase
+                                  .from("group_members")
+                                  .delete()
+                                  .eq("group_id", chatId)
+                                  .eq("user_id", profile?.user_id);
+
+                                if (error) throw error;
+
+                                // Close modal and navigate back
+                                setInfoVisible(false);
+                                router.back();
+                                Alert.alert(
+                                  "Success",
+                                  "You have left the group"
+                                );
+                              } catch (error: any) {
+                                console.error("Error leaving group:", error);
+                                Alert.alert(
+                                  "Error",
+                                  error.message || "Failed to leave group"
+                                );
+                              }
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                  >
+                    <Ionicons name="log-out" size={20} color="#dc3545" />
+                    <Text style={styles.leaveButtonText}>Leave Group</Text>
+                  </TouchableOpacity>
+                )}
               </ScrollView>
             ) : (
               <View style={styles.modalLoading}>
@@ -1373,5 +1480,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "500",
     color: "#666",
+  },
+  groupControlsSection: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    marginVertical: 16,
+  },
+  controlButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  controlButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  controlButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+    marginLeft: 12,
+  },
+  leaveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  leaveButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#dc3545",
+    marginLeft: 8,
   },
 });

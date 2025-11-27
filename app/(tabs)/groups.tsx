@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -79,17 +79,7 @@ export default function GroupsScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
   const router = useRouter();
-
-  // Log the user roles to the console
-  useEffect(() => {
-    console.log("User roles:", profile?.roles);
-    console.log("Has admin role:", hasRole("admin"));
-    console.log("Has superadmin role:", hasRole("superadmin"));
-    console.log(
-      "Is admin (combined):",
-      hasRole("admin") || hasRole("superadmin")
-    );
-  }, [profile, hasRole]);
+  const params = useLocalSearchParams();
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +109,28 @@ export default function GroupsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = hasRole("admin") || hasRole("superadmin");
+
+  // Log the user roles to the console
+  useEffect(() => {
+    console.log("User roles:", profile?.roles);
+    console.log("Has admin role:", hasRole("admin"));
+    console.log("Has superadmin role:", hasRole("superadmin"));
+    console.log(
+      "Is admin (combined):",
+      hasRole("admin") || hasRole("superadmin")
+    );
+  }, [profile, hasRole]);
+
+  // Handle groupId parameter to automatically open group members modal
+  useEffect(() => {
+    const groupId = params.groupId as string;
+    if (groupId && groups.length > 0) {
+      const group = groups.find((g) => g.id === groupId);
+      if (group) {
+        handleViewMembers(group);
+      }
+    }
+  }, [params.groupId, groups]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -320,13 +332,15 @@ export default function GroupsScreen() {
       // Fetch all users in the school with their roles
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select(`
+        .select(
+          `
           id, 
           user_id, 
           full_name, 
           email,
           user_roles:user_roles(role)
-        `)
+        `
+        )
         .eq("school_id", profile?.school_id);
 
       if (profilesError) throw profilesError;
@@ -1398,7 +1412,7 @@ export default function GroupsScreen() {
               onChangeText={setAddMemberSearchQuery}
             />
           </View>
-          
+
           {/* Add role filter chips */}
           <View style={styles.compactFilterContainer}>
             <Ionicons
@@ -1842,5 +1856,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
   },
-
 });
