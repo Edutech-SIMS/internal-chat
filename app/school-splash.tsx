@@ -78,8 +78,9 @@ export default function SchoolSplash() {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: "#007AFF", // Fallback color
+        backgroundColor: "#007AFF",
       }}
+      imageStyle={{ opacity: 0.15 }}
       resizeMode="cover"
     >
       <Animated.View

@@ -71,7 +71,7 @@ interface User {
   user_id: string;
   full_name: string | null;
   email: string | null;
-  user_roles?: { role: string }[]; // Add roles property
+  user_roles?: { role: string }[];
 }
 
 export default function GroupsScreen() {
@@ -370,13 +370,28 @@ export default function GroupsScreen() {
     try {
       const { data: profiles, error } = await supabase
         .from("profiles")
-        .select("id, user_id, full_name, email")
+        .select(
+          `
+          id, 
+          user_id, 
+          full_name, 
+          email,
+          user_roles:user_roles(role)
+        `
+        )
         .eq("school_id", profile?.school_id);
 
       if (error) throw error;
 
       // Filter out the current user
       const otherUsers = profiles?.filter((p) => p.user_id !== user?.id) || [];
+      console.log("Loaded all users:", otherUsers.length);
+      if (otherUsers.length > 0) {
+        console.log(
+          "First user sample:",
+          JSON.stringify(otherUsers[0], null, 2)
+        );
+      }
       setAllUsers(otherUsers);
     } catch (error: any) {
       console.error("Error loading all users:", error);
@@ -912,10 +927,20 @@ export default function GroupsScreen() {
     );
   };
 
-  const filteredUsers = allUsers.filter(
-    (u) =>
+  const filteredUsers = allUsers.filter((u) => {
+    // Apply name/email search filter
+    const matchesSearch =
       u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email?.toLowerCase().includes(searchQuery.toLowerCase())
+      u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+
+    return matchesSearch;
+  });
+
+  console.log(
+    "Filtered users count:",
+    filteredUsers.length,
+    "Search query:",
+    searchQuery
   );
 
   // New filter for group members
@@ -1124,7 +1149,10 @@ export default function GroupsScreen() {
                     styles.primaryButton,
                     { backgroundColor: colors.primary },
                   ]}
-                  onPress={() => setShowCreateModal(true)}
+                  onPress={() => {
+                    setShowCreateModal(true);
+                    loadAllUsers();
+                  }}
                 >
                   <Text style={styles.buttonText}>Create Your First Group</Text>
                 </TouchableOpacity>
