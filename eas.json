@@ -1,0 +1,27 @@
+{
+  "cli": {
+    "version": ">= 16.28.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "SUPABASE_URL": "@SUPABASE_URL",
+        "SUPABASE_ANON_KEY": "@SUPABASE_ANON_KEY"
+      }
+    },
+    "production": {
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

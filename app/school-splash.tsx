@@ -1,14 +1,7 @@
 import { useAuth } from "contexts/AuthContext";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Animated,
-  Image,
-  ImageBackground,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Animated, Image, Text, View } from "react-native";
 
 export default function SchoolSplash() {
   const { user, loading: authLoading, school, hasRole } = useAuth();
@@ -72,16 +65,13 @@ export default function SchoolSplash() {
   const logoUrl = school?.logo_url;
 
   return (
-    <ImageBackground
-      source={require("../assets/images/school-scribbles.png")}
+    <View
       style={{
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
         backgroundColor: "#007AFF",
       }}
-      imageStyle={{ opacity: 0.15 }}
-      resizeMode="cover"
     >
       <Animated.View
         style={{
@@ -152,7 +142,7 @@ export default function SchoolSplash() {
             marginTop: 20,
           }}
         >
-          School Management and Communication Platform
+          Powered by MindSync
         </Text>
       </Animated.View>
 
@@ -163,6 +153,6 @@ export default function SchoolSplash() {
           style={{ marginTop: 30 }}
         />
       )}
-    </ImageBackground>
+    </View>
   );
 }

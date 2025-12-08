@@ -100,18 +100,15 @@ export default function SettingsScreen() {
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error("No access token available");
 
-      const res = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/auth/v1/user`,
-        {
-          method: "PUT",
-          headers: {
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ password: newPassword }),
-        }
-      );
+      const res = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+        method: "PUT",
+        headers: {
+          apikey: process.env.SUPABASE_ANON_KEY!,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password: newPassword }),
+      });
 
       const data = await res.json();
 

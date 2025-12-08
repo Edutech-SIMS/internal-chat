@@ -1,15 +1,18 @@
 {
   "expo": {
-    "name": "Atlas",
+    "name": "MindSync",
+    "plugins": [
+      "expo-notifications"
+    ],
     "slug": "atlas-school-management",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
-    "scheme": "atlas",
-    "projectId": "tglewsgmrjbepakwbsju",
+    "scheme": "mindsync",
+    "projectId": "c9eaab9b-61b5-40e0-b0b3-e7774aee3b5c",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/images/splash_icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#1E40AF"
     },
@@ -21,12 +24,18 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/images/adaptive_icon.png",
         "backgroundColor": "#1E40AF"
-      }
+      },
+      "package": "com.mindsync.schoolmanagement"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/images/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c9eaab9b-61b5-40e0-b0b3-e7774aee3b5c"
+      }
     }
   }
 }

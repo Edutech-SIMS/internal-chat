@@ -6,7 +6,6 @@ import {
   Alert,
   Animated,
   Dimensions,
-  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -86,13 +85,6 @@ export default function Login() {
         end={{ x: 1, y: 1 }}
         style={styles.gradient}
       >
-        {/* Decorative Background Pattern */}
-        <Image
-          source={require("../../assets/images/school-scribbles.png")}
-          style={styles.scribbles}
-          resizeMode="cover"
-        />
-
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
@@ -192,7 +184,7 @@ export default function Login() {
 
             {/* Footer */}
             <Text style={styles.footer}>
-              Powered by Atlas © {new Date().getFullYear()}
+              Powered by MindSync © {new Date().getFullYear()}
             </Text>
           </Animated.View>
         </ScrollView>

@@ -140,20 +140,6 @@ export default function Splash() {
           end={{ x: 1, y: 1 }}
           style={styles.gradient}
         >
-          {/* Decorative Background Pattern */}
-          <Animated.View
-            style={[
-              styles.scribbleContainer,
-              { transform: [{ rotate: spin }] },
-            ]}
-          >
-            <Image
-              source={require("../assets/images/school-scribbles.png")}
-              style={styles.scribbles}
-              resizeMode="cover"
-            />
-          </Animated.View>
-
           {/* Floating Decorative Icons */}
           <View style={styles.floatingIconsContainer}>
             <Animated.Text
@@ -203,14 +189,14 @@ export default function Splash() {
             {/* Logo Container */}
             <View style={styles.logoWrapper}>
               <Image
-                source={require("../assets/images/atlas-icon.png")}
+                source={require("../assets/images/mind_dark.png")}
                 style={styles.logo}
                 resizeMode="contain"
               />
             </View>
 
             {/* App Name */}
-            <Text style={styles.appName}>Atlas</Text>
+            <Text style={styles.appName}>MindSync</Text>
             <Text style={styles.tagline}>School Management System</Text>
 
             {/* Loading Indicator */}
@@ -223,7 +209,7 @@ export default function Splash() {
           {/* Bottom Decoration */}
           <View style={styles.bottomDecoration}>
             <View style={styles.decorativeLine} />
-            <Text style={styles.poweredBy}>Powered by Atlas</Text>
+            <Text style={styles.poweredBy}>Powered by MindSync</Text>
           </View>
         </LinearGradient>
       </View>
