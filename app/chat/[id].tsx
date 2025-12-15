@@ -4,7 +4,13 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { canSendMessages } from "lib/message-permissions";
-import { useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -31,6 +37,8 @@ import { supabase } from "../../lib/supabase";
 import { getThemeColors } from "../../themes";
 
 const { width } = Dimensions.get("window");
+
+// --- Interfaces ---
 
 interface Message {
   id: string;
@@ -62,9 +70,201 @@ interface SelectedFile {
   size?: number;
 }
 
+// --- Helper Functions ---
+
+const formatTime = (dateString: string) => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (diffInSeconds < 60) {
+    return "Just now";
+  } else if (diffInSeconds < 3600) {
+    const minutes = Math.floor(diffInSeconds / 60);
+    return `${minutes}m ago`;
+  } else if (diffInSeconds < 86400) {
+    const hours = Math.floor(diffInSeconds / 3600);
+    return `${hours}h ago`;
+  } else if (diffInSeconds < 604800) {
+    const days = Math.floor(diffInSeconds / 86400);
+    return `${days}d ago`;
+  } else {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+};
+
+const getInitials = (name: string) => {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+};
+
+// --- Sub-components ---
+
+const MessageItem = React.memo(
+  ({
+    item,
+    user,
+    colors,
+    isAnnouncementGroup,
+    showAvatar,
+  }: {
+    item: Message;
+    user: any;
+    colors: any;
+    isAnnouncementGroup: boolean;
+    showAvatar: boolean;
+  }) => {
+    const isMyMessage =
+      item.profiles?.full_name === user?.user_metadata?.full_name;
+    const alignRight = !isAnnouncementGroup && isMyMessage;
+    const isImage = item.attachment_type?.startsWith("image/");
+
+    return (
+      <View
+        style={[
+          styles.messageRow,
+          alignRight ? styles.rowRight : styles.rowLeft,
+        ]}
+      >
+        <View
+          style={[
+            styles.messageBubble,
+            alignRight
+              ? { backgroundColor: colors.primary, borderBottomRightRadius: 4 }
+              : {
+                  backgroundColor: colors.card,
+                  borderBottomLeftRadius: 4,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.05,
+                  shadowRadius: 2,
+                  elevation: 1,
+                },
+          ]}
+        >
+          {!alignRight && (
+            <Text
+              style={[styles.senderName, { color: colors.placeholderText }]}
+              numberOfLines={1}
+            >
+              {item.profiles?.full_name || item.profiles?.email || "Unknown"}
+            </Text>
+          )}
+
+          {item.attachment_url && (
+            <View style={styles.attachmentContainer}>
+              {isImage ? (
+                <TouchableOpacity
+                  onPress={() => Linking.openURL(item.attachment_url!)}
+                >
+                  <Image
+                    source={{ uri: item.attachment_url }}
+                    style={[
+                      styles.attachedImage,
+                      { borderColor: colors.border },
+                    ]}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    styles.fileAttachment,
+                    { backgroundColor: "rgba(0,0,0,0.1)" },
+                  ]}
+                  onPress={() => Linking.openURL(item.attachment_url!)}
+                >
+                  <View style={styles.fileIconContainer}>
+                    <Ionicons
+                      name="document-text"
+                      size={24}
+                      color={alignRight ? "white" : colors.primary}
+                    />
+                  </View>
+                  <View style={styles.fileInfo}>
+                    <Text
+                      style={[
+                        styles.fileName,
+                        { color: alignRight ? "white" : colors.text },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.attachment_name || "Attachment"}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.fileType,
+                        {
+                          color: alignRight
+                            ? "rgba(255,255,255,0.8)"
+                            : colors.placeholderText,
+                        },
+                      ]}
+                    >
+                      Click to view
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          <Text
+            style={[
+              styles.messageText,
+              alignRight ? { color: "#FFFFFF" } : { color: colors.text },
+            ]}
+          >
+            {item.content}
+          </Text>
+
+          <Text
+            style={[
+              styles.timestamp,
+              alignRight
+                ? { color: "rgba(255, 255, 255, 0.7)" }
+                : { color: colors.placeholderText },
+            ]}
+          >
+            {formatTime(item.created_at)}
+          </Text>
+
+          {showAvatar && (
+            <View
+              style={[
+                styles.avatarOverlay,
+                alignRight ? { right: -38 } : { left: -38 },
+              ]}
+            >
+              <View
+                style={[styles.avatar, { backgroundColor: colors.primary }]}
+              >
+                <Text style={styles.avatarText}>
+                  {getInitials(
+                    alignRight
+                      ? user?.user_metadata?.full_name || "Me"
+                      : item.profiles?.full_name || "U"
+                  )}
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }
+);
+
+// --- Main Component ---
+
 export default function ChatScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
+
+  // State
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
@@ -77,30 +277,37 @@ export default function ChatScreen() {
   const [isAnnouncementGroup, setIsAnnouncementGroup] = useState(false);
   const [sending, setSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
 
+  // Hooks
   const { user, profile, schoolId } = useAuth();
   const params = useLocalSearchParams();
   const router = useRouter();
+
+  // Refs
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textInputRef = useRef<TextInput>(null);
 
-  // Check if current user is admin/creator of the group
-  const isGroupAdmin =
-    groupInfo?.created_by === profile?.user_id ||
-    (profile?.roles &&
-      profile.roles.some(
-        (role: any) => role.role === "admin" || role.role === "superadmin"
-      ));
-
   const chatId = params.id as string;
   const chatName = params.name || (params.email as string);
 
+  // Computed
+  const isGroupAdmin = useMemo(() => {
+    return (
+      groupInfo?.created_by === profile?.user_id ||
+      (profile?.roles &&
+        profile.roles.some(
+          (role: any) => role.role === "admin" || role.role === "superadmin"
+        ))
+    );
+  }, [groupInfo, profile]);
+
+  // Effects
   useEffect(() => {
-    // Entrance animation
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -122,9 +329,6 @@ export default function ChatScreen() {
     }
   }, [infoVisible]);
 
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMoreMessages, setHasMoreMessages] = useState(true);
-
   useEffect(() => {
     const initChat = async () => {
       const group = await fetchGroupInfo();
@@ -135,8 +339,8 @@ export default function ChatScreen() {
     initChat();
   }, [chatId]);
 
+  // Logic
   const setupRealtimeSubscription = () => {
-    // Subscribe to typing events
     const typingSubscription = supabase
       .channel("typing-events")
       .on(
@@ -145,9 +349,8 @@ export default function ChatScreen() {
           event: "*",
           schema: "public",
           table: "typing_indicators",
-          filter: `group_id=eq.${chatId}`, // Optimized: Filter by group_id directly
+          filter: `group_id=eq.${chatId}`,
         },
-
         (payload) => {
           if (payload.eventType === "INSERT") {
             const newTypingUser = payload.new.user_id;
@@ -173,31 +376,24 @@ export default function ChatScreen() {
 
   const handleTyping = async (isTyping: boolean) => {
     if (!user) return;
-
-    // Clear previous timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     if (isTyping) {
-      // Send typing start event
       await supabase.from("typing_indicators").upsert({
-        user_id: profile?.user_id, // Use profile.user_id instead of user.id
+        user_id: profile?.user_id,
         group_id: chatId,
         is_typing: true,
         updated_at: new Date().toISOString(),
       });
 
-      // Set timeout to automatically stop typing after 3 seconds
       typingTimeoutRef.current = setTimeout(() => {
         handleTyping(false);
       }, 3000);
     } else {
-      // Send typing stop event
       await supabase
         .from("typing_indicators")
         .delete()
-        .eq("user_id", profile?.user_id); // Use profile.user_id instead of user.id
+        .eq("user_id", profile?.user_id);
     }
   };
 
@@ -206,17 +402,12 @@ export default function ChatScreen() {
 
     setCheckingPermission(true);
     try {
-      // Optimization: Pass group object if available to avoid re-fetching in canSendMessages if we could modify it,
-      // but canSendMessages signature is (chatId, userId).
-      // We can at least avoid the second fetch for is_announcement below.
-
       const hasPermission = await canSendMessages(chatId, profile.user_id);
       setCanSend(hasPermission);
 
       if (groupData) {
         setIsAnnouncementGroup(groupData.is_announcement);
       } else {
-        // Fallback if no group data passed (shouldn't happen with new flow)
         const { data: group } = await supabase
           .from("groups")
           .select("is_announcement")
@@ -243,28 +434,17 @@ export default function ChatScreen() {
     if (error) {
       console.error("Error fetching group info:", error);
       return null;
-    } else {
-      setGroupInfo(data);
-      setIsAnnouncementGroup(data.is_announcement);
-      return data;
     }
+    setGroupInfo(data);
+    setIsAnnouncementGroup(data.is_announcement);
+    return data;
   };
 
   const fetchGroupMembers = async () => {
     try {
       const { data, error } = await supabase
         .from("group_members")
-        .select(
-          `
-        id,
-        user_id,
-        joined_at,
-        profiles (
-          full_name,
-          email
-        )
-      `
-        )
+        .select(`id, user_id, joined_at, profiles (full_name, email)`)
         .eq("group_id", chatId);
 
       if (error) throw error;
@@ -275,7 +455,6 @@ export default function ChatScreen() {
           ? member.profiles[0]
           : member.profiles,
       }));
-
       setGroupMembers(members);
     } catch (error) {
       console.error("Error fetching group members:", error);
@@ -284,39 +463,26 @@ export default function ChatScreen() {
 
   const fetchMessages = async (isInitial = false) => {
     if (!user) return;
-
     if (isInitial) {
       setMessages([]);
       setHasMoreMessages(true);
     }
-
     if (!isInitial && !hasMoreMessages) return;
-
     if (!isInitial) setIsLoadingMore(true);
 
     try {
       let query = supabase
         .from("messages")
         .select(
-          `
-        id,
-        content,
-        created_at,
-        attachment_url,
-        attachment_type,
-        attachment_name,
-        profiles (full_name, email)
-      `
+          `id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
         )
         .eq("group_id", chatId)
         .eq("school_id", schoolId)
-        .order("created_at", { ascending: false }) // Fetch latest first
+        .order("created_at", { ascending: false })
         .limit(50);
 
-      // If loading more, fetch messages older than the oldest one we have
       if (!isInitial && messages.length > 0) {
-        const oldestMessage = messages[0];
-        query = query.lt("created_at", oldestMessage.created_at);
+        query = query.lt("created_at", messages[0].created_at);
       }
 
       const { data, error } = await query;
@@ -331,18 +497,16 @@ export default function ChatScreen() {
               ? msg.profiles[0]
               : msg.profiles,
           }))
-          .reverse(); // Reverse to chronological order
+          .reverse();
 
-        if (data.length < 50) {
-          setHasMoreMessages(false);
-        }
+        if (data.length < 50) setHasMoreMessages(false);
 
         if (isInitial) {
           setMessages(newMessages);
-          // Auto scroll to bottom on initial load
-          setTimeout(() => {
-            flatListRef.current?.scrollToEnd({ animated: false });
-          }, 100);
+          setTimeout(
+            () => flatListRef.current?.scrollToEnd({ animated: false }),
+            100
+          );
         } else {
           setMessages((prev) => [...newMessages, ...prev]);
         }
@@ -360,7 +524,6 @@ export default function ChatScreen() {
       });
 
       if (result.canceled) return;
-
       const asset = result.assets[0];
       setSelectedFile({
         uri: asset.uri,
@@ -414,7 +577,6 @@ export default function ChatScreen() {
 
   const sendMessage = async () => {
     if ((!newMessage.trim() && !selectedFile) || sending || isUploading) return;
-
     if (!canSend) {
       Alert.alert(
         "Permission Denied",
@@ -435,13 +597,12 @@ export default function ChatScreen() {
       }
     }
 
-    // Insert the message
     const { data: newMessageData, error } = await supabase
       .from("messages")
       .insert([
         {
           content: newMessage || (selectedFile ? "Sent an attachment" : ""),
-          user_id: profile?.user_id, // Use profile.user_id instead of user.id to match foreign key constraint
+          user_id: profile?.user_id,
           group_id: chatId,
           school_id: schoolId,
           attachment_url: attachmentUrl,
@@ -454,12 +615,10 @@ export default function ChatScreen() {
 
     if (error) {
       Alert.alert("Error", error.message);
-      console.log("Error inserting message:", error);
       setSending(false);
       return;
     }
 
-    // Optimistically update messages
     const formattedMessage = {
       ...newMessageData,
       profiles: Array.isArray(newMessageData.profiles)
@@ -472,176 +631,41 @@ export default function ChatScreen() {
     setSelectedFile(null);
     setSending(false);
 
-    try {
-      // Trigger push notifications via Edge Function
-      const { data, error: pushError } = await supabase.functions.invoke(
-        "send-push-message",
-        {
-          body: {
-            message: newMessage || "Sent an attachment",
-            group_id: chatId,
-            school_id: schoolId,
-            sender_id: profile!.user_id, // Use profile.user_id instead of user.id
-          },
-        }
+    // Trigger push notification (fire and forget)
+    supabase.functions
+      .invoke("send-push-message", {
+        body: {
+          message: newMessage || "Sent an attachment",
+          group_id: chatId,
+          school_id: schoolId,
+          sender_id: profile!.user_id,
+        },
+      })
+      .then(({ error }) => {
+        if (error) console.error("Push notification error:", error);
+      });
+  };
+
+  // Rendering
+  const renderMessage = useCallback(
+    ({ item, index }: { item: Message; index: number }) => {
+      const nextMessage = messages[index + 1];
+      const isLastFromUser =
+        !nextMessage ||
+        nextMessage.profiles?.full_name !== item.profiles?.full_name;
+
+      return (
+        <MessageItem
+          item={item}
+          user={user}
+          colors={colors}
+          isAnnouncementGroup={isAnnouncementGroup}
+          showAvatar={isLastFromUser}
+        />
       );
-
-      if (pushError) {
-        console.error("Push notification error:", pushError);
-      } else {
-        console.log("Push notification sent:", data);
-      }
-    } catch (err) {
-      console.error("Push notification failed:", err);
-    }
-  };
-
-  const handleEmojiSelect = (emoji: string) => {
-    setNewMessage((prev) => prev + emoji);
-    textInputRef.current?.focus();
-  };
-
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-    if (diffInSeconds < 60) {
-      return "Just now";
-    } else if (diffInSeconds < 3600) {
-      const minutes = Math.floor(diffInSeconds / 60);
-      return `${minutes}m ago`;
-    } else if (diffInSeconds < 86400) {
-      const hours = Math.floor(diffInSeconds / 3600);
-      return `${hours}h ago`;
-    } else if (diffInSeconds < 604800) {
-      const days = Math.floor(diffInSeconds / 86400);
-      return `${days}d ago`;
-    } else {
-      return date.toLocaleDateString([], { month: "short", day: "numeric" });
-    }
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isMyMessage =
-      item.profiles?.full_name === user?.user_metadata?.full_name;
-
-    const alignRight = !isAnnouncementGroup && isMyMessage;
-
-    // Only show avatar on last bubble in a block
-    const nextMessage = messages[index + 1];
-    const isLastFromUser =
-      !nextMessage ||
-      nextMessage.profiles?.full_name !== item.profiles?.full_name;
-
-    const isImage = item.attachment_type?.startsWith("image/");
-
-    return (
-      <View
-        style={[
-          styles.messageRow,
-          alignRight ? styles.rowRight : styles.rowLeft,
-        ]}
-      >
-        <View
-          style={[
-            styles.messageBubble,
-            alignRight ? styles.myMessageBubble : styles.otherMessageBubble,
-          ]}
-        >
-          {/* Sender name (only once, and not for my messages) */}
-          {!alignRight && (
-            <Text style={styles.senderName}>
-              {item.profiles?.full_name || item.profiles?.email || "Unknown"}
-            </Text>
-          )}
-
-          {item.attachment_url && (
-            <View style={styles.attachmentContainer}>
-              {isImage ? (
-                <TouchableOpacity
-                  onPress={() => Linking.openURL(item.attachment_url!)}
-                >
-                  <Image
-                    source={{ uri: item.attachment_url }}
-                    style={styles.attachedImage}
-                    resizeMode="cover"
-                  />
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.fileAttachment}
-                  onPress={() => Linking.openURL(item.attachment_url!)}
-                >
-                  <View style={styles.fileIconContainer}>
-                    <Ionicons name="document-text" size={24} color="white" />
-                  </View>
-                  <View style={styles.fileInfo}>
-                    <Text
-                      style={[styles.fileName, { color: "white" }]}
-                      numberOfLines={1}
-                    >
-                      {item.attachment_name || "Attachment"}
-                    </Text>
-                    <Text style={[styles.fileType, { color: "white" }]}>
-                      Click to view
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-
-          <Text
-            style={[
-              styles.messageText,
-              alignRight ? styles.myMessageText : styles.otherMessageText,
-            ]}
-          >
-            {item.content}
-          </Text>
-
-          <Text
-            style={[
-              styles.timestamp,
-              alignRight ? styles.myTimestamp : styles.otherTimestamp,
-            ]}
-          >
-            {formatTime(item.created_at)}
-          </Text>
-
-          {/* Avatar overlay (only last bubble in block) */}
-          {isLastFromUser && (
-            <View
-              style={[
-                styles.avatarOverlay,
-                alignRight ? { right: -38 } : { left: -38 },
-              ]}
-            >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {getInitials(
-                    alignRight
-                      ? user?.user_metadata?.full_name || "Me"
-                      : item.profiles?.full_name || "U"
-                  )}
-                </Text>
-              </View>
-            </View>
-          )}
-        </View>
-      </View>
-    );
-  };
+    },
+    [messages, user, colors, isAnnouncementGroup]
+  );
 
   if (checkingPermission) {
     return (
@@ -653,12 +677,10 @@ export default function ChatScreen() {
           backgroundColor={colors.background}
         />
         <View style={styles.loadingContainer}>
-          <View style={styles.loadingContent}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.loadingText, { color: colors.text }]}>
-              Loading chat...
-            </Text>
-          </View>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.text }]}>
+            Loading chat...
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -677,7 +699,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
-        {/* Enhanced Header */}
+        {/* Header */}
         <Animated.View
           style={[
             styles.header,
@@ -705,13 +727,24 @@ export default function ChatScreen() {
               {chatName || "Chat"}
             </Text>
             {isAnnouncementGroup && (
-              <View style={styles.announcementBadge}>
-                <Ionicons name="megaphone" size={12} color="#FF6B35" />
-                <Text style={styles.announcementText}>Announcement</Text>
+              <View
+                style={[
+                  styles.announcementBadge,
+                  { backgroundColor: colors.primary + "15" },
+                ]}
+              >
+                <Ionicons name="megaphone" size={12} color={colors.primary} />
+                <Text
+                  style={[styles.announcementText, { color: colors.primary }]}
+                >
+                  Announcement
+                </Text>
               </View>
             )}
             {typingUsers.size > 0 && (
-              <Text style={[styles.typingText, { color: colors.text }]}>
+              <Text
+                style={[styles.typingText, { color: colors.placeholderText }]}
+              >
                 {Array.from(typingUsers).length === 1
                   ? "1 person is typing..."
                   : `${Array.from(typingUsers).length} people are typing...`}
@@ -725,21 +758,18 @@ export default function ChatScreen() {
             activeOpacity={0.7}
           >
             <Ionicons
-              name="information-circle"
-              size={24}
+              name="information-circle-outline"
+              size={26}
               color={colors.primary}
             />
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Messages List */}
+        {/* Messages */}
         <Animated.View
           style={[
             styles.messageContainer,
-            {
-              opacity: fadeAnim,
-              backgroundColor: colors.background,
-            },
+            { opacity: fadeAnim, backgroundColor: colors.background },
           ]}
         >
           {messages.length === 0 ? (
@@ -753,17 +783,22 @@ export default function ChatScreen() {
                 <Ionicons
                   name="chatbubble-ellipses-outline"
                   size={80}
-                  color={isDarkMode ? "#444444" : "#E5E5E7"}
+                  color={colors.border}
                 />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
                 No messages yet
               </Text>
-              <Text style={[styles.emptySubtitle, { color: colors.text }]}>
+              <Text
+                style={[
+                  styles.emptySubtitle,
+                  { color: colors.placeholderText },
+                ]}
+              >
                 {canSend
                   ? "Start the conversation with a friendly message!"
                   : isAnnouncementGroup
-                  ? "This is an announcement group. Only authorized users can send messages."
+                  ? "This is an announcement group. read-only."
                   : "Be the first to start the conversation!"}
               </Text>
             </View>
@@ -782,7 +817,7 @@ export default function ChatScreen() {
           )}
         </Animated.View>
 
-        {/* Enhanced Message Input */}
+        {/* Input Area */}
         {canSend && (
           <Animated.View
             style={[
@@ -826,7 +861,11 @@ export default function ChatScreen() {
                   onPress={() => setSelectedFile(null)}
                   style={styles.removeFileButton}
                 >
-                  <Ionicons name="close-circle" size={20} color="red" />
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color={colors.notification || "red"}
+                  />
                 </TouchableOpacity>
               </View>
             )}
@@ -842,7 +881,11 @@ export default function ChatScreen() {
                 onPress={pickDocument}
                 disabled={isUploading}
               >
-                <Ionicons name="attach" size={24} color={colors.text} />
+                <Ionicons
+                  name="add-circle-outline"
+                  size={28}
+                  color={colors.primary}
+                />
               </TouchableOpacity>
 
               <TextInput
@@ -856,11 +899,7 @@ export default function ChatScreen() {
                 placeholderTextColor={colors.placeholderText}
                 style={[
                   styles.textInput,
-                  {
-                    backgroundColor: colors.inputBackground,
-                    color: colors.text,
-                    borderColor: colors.border,
-                  },
+                  { color: colors.text },
                   !newMessage && { textAlignVertical: "center" },
                 ]}
                 multiline
@@ -871,9 +910,6 @@ export default function ChatScreen() {
                 onPress={sendMessage}
                 style={[
                   styles.sendButton,
-                  (newMessage.trim() || selectedFile) && !sending
-                    ? styles.sendButtonActive
-                    : styles.sendButtonInactive,
                   {
                     backgroundColor:
                       (newMessage.trim() || selectedFile) && !sending
@@ -888,11 +924,11 @@ export default function ChatScreen() {
                   <ActivityIndicator size="small" color={colors.text} />
                 ) : (
                   <Ionicons
-                    name="send"
+                    name="arrow-up"
                     size={20}
                     color={
                       (newMessage.trim() || selectedFile) && !sending
-                        ? colors.text
+                        ? "#FFF"
                         : colors.placeholderText
                     }
                   />
@@ -902,7 +938,7 @@ export default function ChatScreen() {
           </Animated.View>
         )}
 
-        {/* Permission Notice */}
+        {/* Permission Notice (Announcement) */}
         {!canSend && isAnnouncementGroup && (
           <Animated.View
             style={[
@@ -914,19 +950,19 @@ export default function ChatScreen() {
               },
             ]}
           >
-            <View
-              style={[styles.permissionIcon, { backgroundColor: colors.card }]}
-            >
-              <Ionicons name="megaphone" size={18} color="#FF6B35" />
-            </View>
+            <Ionicons
+              name="lock-closed"
+              size={18}
+              color="#FF6B35"
+              style={{ marginRight: 8 }}
+            />
             <Text style={[styles.permissionText, { color: "#FF6B35" }]}>
-              This is an announcement group. Only authorized users can send
-              messages.
+              This is an announcement group (Read-only).
             </Text>
           </Animated.View>
         )}
 
-        {/* Enhanced Group Info Modal */}
+        {/* Info Modal */}
         <Modal
           visible={infoVisible}
           animationType="slide"
@@ -942,7 +978,10 @@ export default function ChatScreen() {
               <Text style={[styles.modalTitle, { color: colors.text }]}>
                 Group Info
               </Text>
-              <TouchableOpacity onPress={() => setInfoVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setInfoVisible(false)}
+                style={styles.modalCloseButton}
+              >
                 <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -1073,9 +1112,16 @@ export default function ChatScreen() {
                   ))}
                 </View>
 
-                {/* Group Controls Section - Only visible to group admin */}
                 {isGroupAdmin && (
-                  <View style={styles.groupControlsSection}>
+                  <View
+                    style={[
+                      styles.groupControlsSection,
+                      {
+                        borderTopColor: colors.border,
+                        borderBottomColor: colors.border,
+                      },
+                    ]}
+                  >
                     <Text
                       style={[
                         styles.sectionTitle,
@@ -1084,14 +1130,12 @@ export default function ChatScreen() {
                     >
                       Group Controls
                     </Text>
-
                     <TouchableOpacity
                       style={[
                         styles.controlButton,
-                        { backgroundColor: colors.border },
+                        { backgroundColor: colors.background },
                       ]}
                       onPress={() => {
-                        // Route to group management page
                         setInfoVisible(false);
                         router.push({
                           pathname: "/(tabs)/groups",
@@ -1101,7 +1145,7 @@ export default function ChatScreen() {
                     >
                       <View style={styles.controlButtonContent}>
                         <Ionicons
-                          name="settings"
+                          name="settings-outline"
                           size={20}
                           color={colors.text}
                         />
@@ -1123,7 +1167,6 @@ export default function ChatScreen() {
                   </View>
                 )}
 
-                {/* Leave Group Button - Visible to all members except creator */}
                 {groupInfo?.created_by !== profile?.user_id && (
                   <TouchableOpacity
                     style={[styles.leaveButton]}
@@ -1138,24 +1181,15 @@ export default function ChatScreen() {
                             style: "destructive",
                             onPress: async () => {
                               try {
-                                // Remove user from group
                                 const { error } = await supabase
                                   .from("group_members")
                                   .delete()
                                   .eq("group_id", chatId)
                                   .eq("user_id", profile?.user_id);
-
                                 if (error) throw error;
-
-                                // Close modal and navigate back
                                 setInfoVisible(false);
                                 router.back();
-                                Alert.alert(
-                                  "Success",
-                                  "You have left the group"
-                                );
                               } catch (error: any) {
-                                console.error("Error leaving group:", error);
                                 Alert.alert(
                                   "Error",
                                   error.message || "Failed to leave group"
@@ -1167,7 +1201,11 @@ export default function ChatScreen() {
                       );
                     }}
                   >
-                    <Ionicons name="log-out" size={20} color="#dc3545" />
+                    <Ionicons
+                      name="log-out-outline"
+                      size={20}
+                      color="#dc3545"
+                    />
                     <Text style={styles.leaveButtonText}>Leave Group</Text>
                   </TouchableOpacity>
                 )}
@@ -1213,6 +1251,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
+    paddingTop: Platform.OS === "android" ? 10 : 16,
   },
   backButton: {
     padding: 8,
@@ -1224,15 +1263,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "600",
-    flex: 1,
-    marginLeft: 12,
+    textAlign: "center",
   },
   announcementBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF4F2",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
@@ -1240,7 +1277,6 @@ const styles = StyleSheet.create({
   },
   announcementText: {
     fontSize: 11,
-    color: "#FF6B35",
     fontWeight: "500",
     marginLeft: 4,
   },
@@ -1269,11 +1305,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
+    opacity: 0.5,
   },
   emptyTitle: {
     fontSize: 20,
@@ -1290,83 +1322,58 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 20,
   },
-  messageWrapper: {
+  messageRow: {
     flexDirection: "row",
     marginBottom: 12,
-    alignItems: "flex-end",
+    position: "relative",
+    paddingHorizontal: 38,
   },
-  myMessageWrapper: {
-    justifyContent: "flex-end",
-  },
-  otherMessageWrapper: {
+  rowLeft: {
     justifyContent: "flex-start",
   },
-
-  avatarSpacer: {
-    width: 40,
+  rowRight: {
+    justifyContent: "flex-end",
   },
-
   messageBubble: {
     maxWidth: width * 0.75,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
-  },
-  myMessageBubble: {
-    backgroundColor: "#007AFF",
-    borderBottomRightRadius: 4,
-  },
-  otherMessageBubble: {
-    backgroundColor: "#FFFFFF",
-    borderBottomLeftRadius: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 18,
   },
   senderName: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
-    color: "#8E8E93",
     marginBottom: 4,
+    marginLeft: 2,
   },
   messageText: {
     fontSize: 16,
-  },
-  myMessageText: {
-    color: "#FFFFFF",
-  },
-  otherMessageText: {
-    color: "#1C1C1E",
+    lineHeight: 22,
   },
   timestamp: {
-    fontSize: 11,
+    fontSize: 10,
     marginTop: 4,
     alignSelf: "flex-end",
-  },
-  myTimestamp: {
-    color: "rgba(255, 255, 255, 0.7)",
-  },
-  otherTimestamp: {
-    color: "#8E8E93",
+    opacity: 0.8,
   },
   attachmentContainer: {
     marginBottom: 8,
+    borderRadius: 10,
+    overflow: "hidden",
   },
   attachedImage: {
     width: 200,
-    height: 200,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
+    height: 150,
+    borderRadius: 10,
+    borderWidth: 0.5,
   },
   fileAttachment: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.05)",
     padding: 10,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.2)", // subtle border for files
   },
   fileIconContainer: {
     marginRight: 10,
@@ -1376,31 +1383,52 @@ const styles = StyleSheet.create({
   },
   fileName: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "500",
   },
   fileType: {
-    fontSize: 12,
+    fontSize: 11,
+    marginTop: 2,
   },
+  avatarOverlay: {
+    position: "absolute",
+    bottom: 0,
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  avatarText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "bold",
+  },
+
+  // Input
   inputContainer: {
-    flexDirection: "column",
     padding: 10,
-    borderTopWidth: 1,
+    paddingTop: 8,
+    borderTopWidth: 0.5,
   },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 20,
-    paddingHorizontal: 8,
+    borderRadius: 24,
+    paddingHorizontal: 6,
     paddingVertical: 6,
+    minHeight: 48,
   },
   selectedFileContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     padding: 10,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 12,
+    marginHorizontal: 4,
   },
   selectedFileInfo: {
     flexDirection: "row",
@@ -1408,85 +1436,63 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   selectedFileName: {
-    marginLeft: 8,
-    fontSize: 14,
+    marginLeft: 10,
+    fontSize: 13,
+    fontWeight: "500",
     flex: 1,
   },
   removeFileButton: {
     padding: 4,
   },
   attachButton: {
-    padding: 8,
-    marginRight: 4,
-  },
-  emojiButton: {
-    padding: 8,
-    marginRight: 4,
+    padding: 6,
   },
   textInput: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    marginRight: 10,
+    fontSize: 16,
+    maxHeight: 120, // Limit height of input
+  },
+  sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 6,
   },
 
-  sendButton: {
-    borderRadius: 20,
-    padding: 10,
-  },
-  sendButtonActive: {},
-  sendButtonInactive: {
-    backgroundColor: "transparent",
-  },
-  emojiPickerContainer: {
-    height: 250,
-    marginTop: 8,
-    borderTopWidth: 1,
-  },
+  // Permission
   permissionNotice: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    justifyContent: "center",
+    paddingVertical: 12,
     borderTopWidth: 0.5,
   },
-  permissionIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
   permissionText: {
-    flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "500",
   },
+
+  // Modal
   modalContainer: {
     flex: 1,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingTop: 16,
+    paddingHorizontal: 0,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    paddingHorizontal: 20,
     paddingBottom: 16,
-    borderBottomWidth: 1,
-    marginBottom: 16,
-  },
-  modalTitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+    borderBottomWidth: 0.5,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginLeft: 8,
+    fontSize: 18,
+    fontWeight: "600",
   },
   modalCloseButton: {
     padding: 4,
@@ -1494,159 +1500,78 @@ const styles = StyleSheet.create({
   modalContent: {
     flex: 1,
   },
-  infoCard: {
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  infoItemTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  infoItemValue: {
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  typeContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  readOnlyNotice: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFF4F2",
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  readOnlyText: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginLeft: 8,
-    color: "#FF6B35",
-  },
-  modalLoading: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
-  },
-  modalLoadingText: {
-    fontSize: 16,
-    marginLeft: 12,
-  },
-  modalCloseButtonLarge: {
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 16,
-  },
-  modalCloseButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "600",
-  },
-
-  messageRow: {
-    flexDirection: "row",
-    marginBottom: 12,
-    position: "relative",
-    paddingHorizontal: 48,
-  },
-  rowLeft: {
-    justifyContent: "flex-start",
-  },
-  rowRight: {
-    justifyContent: "flex-end",
-  },
-  avatarOverlay: {
-    position: "absolute",
-    bottom: 0,
-  },
-
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "600",
-  },
   groupHeaderSection: {
     alignItems: "center",
-    paddingVertical: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E7",
+    paddingVertical: 30,
+    paddingHorizontal: 20,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "rgba(0,0,0,0.05)",
   },
   groupIconLarge: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
   },
   groupNameLarge: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 22,
+    fontWeight: "700",
     marginBottom: 8,
     textAlign: "center",
   },
   groupDescription: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: "center",
     marginBottom: 16,
-    paddingHorizontal: 32,
+    lineHeight: 20,
   },
   groupMetaRow: {
     flexDirection: "row",
-    gap: 16,
+    gap: 20,
+    marginTop: 8,
   },
   metaItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
   },
   metaText: {
-    fontSize: 14,
+    fontSize: 13,
   },
   membersSection: {
-    padding: 20,
+    paddingVertical: 20,
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
     textTransform: "uppercase",
-    marginBottom: 12,
+    marginBottom: 10,
+    paddingHorizontal: 20,
+    letterSpacing: 0.5,
+    opacity: 0.6,
   },
   memberItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 0.5,
   },
   memberAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#E5E5E7",
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#F0F0F0",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 14,
   },
   memberAvatarText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
+    color: "#555",
   },
   memberInfo: {
     flex: 1,
@@ -1656,56 +1581,60 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   memberEmail: {
-    fontSize: 14,
+    fontSize: 13,
   },
   adminBadge: {
-    backgroundColor: "#E5E5E7",
-    paddingHorizontal: 8,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 10,
   },
   adminBadgeText: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 11,
+    fontWeight: "600",
     color: "#666",
   },
   groupControlsSection: {
-    padding: 20,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    marginVertical: 16,
+    paddingVertical: 20,
+    borderTopWidth: 0.5,
+    borderBottomWidth: 0.5,
   },
   controlButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    marginBottom: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
   },
   controlButtonContent: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 14,
   },
   controlButtonText: {
     fontSize: 16,
     fontWeight: "500",
-    marginLeft: 12,
   },
   leaveButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 20,
+    marginTop: 10,
     marginBottom: 20,
   },
   leaveButtonText: {
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "600",
     color: "#dc3545",
     marginLeft: 8,
+  },
+  modalLoading: {
+    alignItems: "center",
+    marginTop: 50,
+  },
+  modalLoadingText: {
+    marginTop: 10,
+    fontSize: 14,
   },
 });

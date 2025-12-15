@@ -182,7 +182,6 @@ export default function SettingsScreen() {
       <ScrollView
         style={[styles.container, { backgroundColor: colors.background }]}
         showsVerticalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -446,7 +445,7 @@ export default function SettingsScreen() {
         {/* App Info */}
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: colors.text }]}>
-            {school?.name} Communication Software v1.0.0
+            {new Date().getFullYear()} Mindsync Solutions v1.0.0
           </Text>
         </View>
       </ScrollView>

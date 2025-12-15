@@ -8,6 +8,7 @@ import {
   Modal,
   RefreshControl,
   ScrollView,
+  SectionList,
   StyleSheet,
   Switch,
   Text,
@@ -30,6 +31,7 @@ interface Group {
   created_at: string;
   created_by: string;
   member_count: number;
+  preview_members?: { full_name: string | null; email: string | null }[];
 }
 
 interface GroupMember {
@@ -42,6 +44,7 @@ interface GroupMember {
     id: string;
     full_name: string | null;
     email: string | null;
+    avatar_url?: string | null;
   } | null;
   user_roles?: { role: string }[]; // Add roles property
 }
@@ -56,11 +59,13 @@ interface RawGroupMemberData {
         id: string;
         full_name: string | null;
         email: string | null;
+        avatar_url?: string | null;
       }[]
     | {
         id: string;
         full_name: string | null;
         email: string | null;
+        avatar_url?: string | null;
       }
     | null;
   // Remove direct user property reference since it causes typing issues
@@ -71,6 +76,7 @@ interface User {
   user_id: string;
   full_name: string | null;
   email: string | null;
+  avatar_url?: string | null;
   user_roles?: { role: string }[];
 }
 
@@ -94,21 +100,46 @@ export default function GroupsScreen() {
   const [selectedUsersForCreate, setSelectedUsersForCreate] = useState<
     Set<string>
   >(new Set());
+  const [selectedUsersForAdd, setSelectedUsersForAdd] = useState<Set<string>>(
+    new Set()
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [addMemberSearchQuery, setAddMemberSearchQuery] = useState("");
   const [memberRoleFilter, setMemberRoleFilter] = useState<string>("all"); // Role filter for members modal
-  const [addMemberRoleFilter, setAddMemberRoleFilter] = useState<string>("all"); // Role filter for add member modal
   const [newGroup, setNewGroup] = useState({
     name: "",
     description: "",
     is_public: true,
     is_announcement: false,
   });
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    new Set()
+  );
   const [createLoading, setCreateLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = hasRole("admin") || hasRole("superadmin");
+
+  const toggleSection = (title: string) => {
+    const newCollapsed = new Set(collapsedSections);
+    if (newCollapsed.has(title)) {
+      newCollapsed.delete(title);
+    } else {
+      newCollapsed.add(title);
+    }
+    setCollapsedSections(newCollapsed);
+  };
+
+  const getInitials = (name: string | null) => {
+    if (!name) return "?";
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
 
   // Log the user roles to the console
   useEffect(() => {
@@ -154,17 +185,40 @@ export default function GroupsScreen() {
 
       if (groupsError) throw groupsError;
 
-      // Get member counts for each group
+      // Get member counts and preview for each group
       const groupsWithCounts = await Promise.all(
         (groupsData || []).map(async (group) => {
-          const { count, error: countError } = await supabase
+          // Fetch preview members and count
+          const {
+            data: members,
+            count,
+            error: countError,
+          } = await supabase
             .from("group_members")
-            .select("*", { count: "exact", head: true })
-            .eq("group_id", group.id);
+            .select(
+              `
+              joined_at,
+              profiles (
+                full_name,
+                email
+              )
+            `,
+              { count: "exact" }
+            )
+            .eq("group_id", group.id)
+            .limit(4);
+
+          const preview_members = members
+            ?.map((m: any) => m.profiles)
+            .filter((p: any) => p) as {
+            full_name: string | null;
+            email: string | null;
+          }[];
 
           return {
             ...group,
             member_count: countError ? 0 : count || 0,
+            preview_members: preview_members || [],
           };
         })
       );
@@ -494,7 +548,7 @@ export default function GroupsScreen() {
   const openAddMemberModal = async (group: Group) => {
     setSelectedGroup(group);
     setAddMemberSearchQuery(""); // Reset add member search when opening modal
-    setAddMemberRoleFilter("all"); // Reset add member role filter when opening modal
+    setAddMemberSearchQuery(""); // Reset add member search when opening modal
     await loadAvailableUsers(group);
     setShowAddMemberModal(true);
   };
@@ -709,72 +763,110 @@ export default function GroupsScreen() {
             <Text style={[styles.groupName, { color: colors.text }]}>
               {group.name}
             </Text>
-            <Text
-              style={[
-                styles.groupDescription,
-                { color: colors.placeholderText },
-              ]}
-              numberOfLines={1}
-            >
-              {group.description || "No description"}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.groupDetails}>
-          <View style={styles.detailItem}>
-            <Ionicons
-              name="person-outline"
-              size={16}
-              color={colors.placeholderText}
-            />
-            <Text
-              style={[styles.detailText, { color: colors.placeholderText }]}
-            >
-              {group.member_count} members
-            </Text>
-          </View>
-          <View style={styles.detailItem}>
-            {group.is_public ? (
-              <Ionicons name="globe-outline" size={16} color="#28a745" />
-            ) : (
-              <Ionicons name="lock-closed-outline" size={16} color="#ffc107" />
-            )}
-            <Text
-              style={[styles.detailText, { color: colors.placeholderText }]}
-            >
-              {group.is_public ? "Public" : "Private"}
-            </Text>
-          </View>
-          {group.is_announcement && (
-            <View style={styles.detailItem}>
-              <Ionicons name="megaphone-outline" size={16} color="#dc3545" />
+            {group.description ? (
               <Text
-                style={[styles.detailText, { color: colors.placeholderText }]}
+                style={[
+                  styles.groupDescription,
+                  { color: colors.placeholderText },
+                ]}
+                numberOfLines={1}
               >
-                Announcement
+                {group.description}
               </Text>
-            </View>
-          )}
+            ) : null}
+          </View>
         </View>
 
-        <View style={styles.groupActions}>
+        {/* Member Preview Section */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: 16,
+            paddingHorizontal: 4,
+          }}
+        >
+          <View style={{ flexDirection: "row", marginRight: 8 }}>
+            {group.preview_members?.slice(0, 4).map((m, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.avatar,
+                  {
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    marginLeft: index > 0 ? -12 : 0,
+                    borderWidth: 2,
+                    borderColor: colors.card,
+                    backgroundColor: colors.primary,
+                  },
+                ]}
+              >
+                <Text style={[styles.avatarText, { fontSize: 12 }]}>
+                  {getInitials(m.full_name)}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <Text style={{ color: colors.placeholderText, fontSize: 14 }}>
+            {group.member_count > 0
+              ? `${group.member_count} members`
+              : "No members"}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.groupActions,
+            {
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              paddingTop: 12,
+              marginTop: 4,
+              gap: 0,
+              justifyContent: "space-between",
+            },
+          ]}
+        >
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.border }]}
+            style={[styles.actionButton, { backgroundColor: "transparent" }]}
             onPress={() => handleViewMembers(group)}
           >
-            <Text style={[styles.actionButtonText, { color: colors.text }]}>
-              View Members
+            <Text style={[styles.actionButtonText, { color: colors.primary }]}>
+              View
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.primary }]}
-            onPress={async () => {
-              openAddMemberModal(group);
+          <View
+            style={{
+              width: 1,
+              height: 20,
+              backgroundColor: colors.border,
+              alignSelf: "center",
             }}
+          />
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: "transparent" }]}
+            onPress={() => openAddMemberModal(group)}
           >
-            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+            <Text style={[styles.actionButtonText, { color: colors.primary }]}>
               Add Member
+            </Text>
+          </TouchableOpacity>
+          <View
+            style={{
+              width: 1,
+              height: 20,
+              backgroundColor: colors.border,
+              alignSelf: "center",
+            }}
+          />
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: "transparent" }]}
+            onPress={() => handleDeleteGroup(group.id, group.name || "Group")}
+          >
+            <Text style={[styles.actionButtonText, { color: "#dc3545" }]}>
+              Delete
             </Text>
           </TouchableOpacity>
         </View>
@@ -905,18 +997,25 @@ export default function GroupsScreen() {
 
   const renderUserSelectionItem = ({ item }: { item: User }) => {
     const isSelected = selectedUsersForCreate.has(item.user_id);
+    const initials = getInitials(item.full_name);
+
     return (
       <TouchableOpacity
         style={[styles.userItem, { borderBottomColor: colors.border }]}
         onPress={() => toggleUserSelection(item.user_id)}
       >
-        <View style={styles.userInfo}>
-          <Text style={[styles.userName, { color: colors.text }]}>
-            {item.full_name}
-          </Text>
-          <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
-            {item.email}
-          </Text>
+        <View style={styles.userInfoContainer}>
+          <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <View style={styles.userInfo}>
+            <Text style={[styles.userName, { color: colors.text }]}>
+              {item.full_name}
+            </Text>
+            <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
+              {item.email}
+            </Text>
+          </View>
         </View>
         <Ionicons
           name={isSelected ? "checkbox" : "square-outline"}
@@ -935,6 +1034,45 @@ export default function GroupsScreen() {
 
     return matchesSearch;
   });
+
+  // Group users by role
+  const getGroupedUsers = () => {
+    const groups: { title: string; data: User[] }[] = [
+      { title: "Teachers", data: [] },
+      { title: "Parents", data: [] },
+      { title: "Students", data: [] },
+      { title: "Others", data: [] },
+    ];
+
+    filteredUsers.forEach((user) => {
+      const roles = user.user_roles?.map((r) => r.role) || [];
+      if (roles.includes("teacher")) {
+        groups[0].data.push(user);
+      } else if (roles.includes("parent")) {
+        groups[1].data.push(user);
+      } else if (roles.includes("student")) {
+        groups[2].data.push(user);
+      } else {
+        groups[3].data.push(user);
+      }
+    });
+
+    return groups.filter((group) => group.data.length > 0);
+  };
+
+  const groupedUsers = getGroupedUsers();
+
+  const selectAllRole = (users: User[]) => {
+    const newSelection = new Set(selectedUsersForCreate);
+    users.forEach((user) => newSelection.add(user.user_id));
+    setSelectedUsersForCreate(newSelection);
+  };
+
+  const deselectAllRole = (users: User[]) => {
+    const newSelection = new Set(selectedUsersForCreate);
+    users.forEach((user) => newSelection.delete(user.user_id));
+    setSelectedUsersForCreate(newSelection);
+  };
 
   console.log(
     "Filtered users count:",
@@ -963,23 +1101,141 @@ export default function GroupsScreen() {
     return matchesSearch && matchesRole;
   });
 
-  // Update the filteredAvailableUsers to include role filtering
-  const filteredAvailableUsers = availableUsers.filter((user) => {
-    // Apply name/email search filter
-    const matchesSearch =
-      user.full_name
-        ?.toLowerCase()
-        .includes(addMemberSearchQuery.toLowerCase()) ||
-      user.email?.toLowerCase().includes(addMemberSearchQuery.toLowerCase());
+  // Group available users by role
+  const getGroupedAvailableUsers = () => {
+    // Filter available users first
+    const filtered = availableUsers.filter((user) => {
+      // Apply name/email search filter
+      const matchesSearch =
+        user.full_name
+          ?.toLowerCase()
+          .includes(addMemberSearchQuery.toLowerCase()) ||
+        user.email?.toLowerCase().includes(addMemberSearchQuery.toLowerCase());
+      return matchesSearch;
+    });
 
-    // Apply role filter
-    const matchesRole =
-      addMemberRoleFilter === "all" ||
-      (user.user_roles &&
-        user.user_roles.some((role) => role.role === addMemberRoleFilter));
+    const groups: { title: string; data: User[] }[] = [
+      { title: "Teachers", data: [] },
+      { title: "Parents", data: [] },
+      { title: "Students", data: [] },
+      { title: "Others", data: [] },
+    ];
 
-    return matchesSearch && matchesRole;
-  });
+    filtered.forEach((user) => {
+      const roles = user.user_roles?.map((r) => r.role) || [];
+      if (roles.includes("teacher")) {
+        groups[0].data.push(user);
+      } else if (roles.includes("parent")) {
+        groups[1].data.push(user);
+      } else if (roles.includes("student")) {
+        groups[2].data.push(user);
+      } else {
+        groups[3].data.push(user);
+      }
+    });
+
+    return groups.filter((group) => group.data.length > 0);
+  };
+
+  const groupedAvailableUsers = getGroupedAvailableUsers();
+
+  const selectAllAvailableRole = (users: User[]) => {
+    const newSelection = new Set(selectedUsersForAdd);
+    users.forEach((user) => newSelection.add(user.user_id));
+    setSelectedUsersForAdd(newSelection);
+  };
+
+  const deselectAllAvailableRole = (users: User[]) => {
+    const newSelection = new Set(selectedUsersForAdd);
+    users.forEach((user) => newSelection.delete(user.user_id));
+    setSelectedUsersForAdd(newSelection);
+  };
+
+  const toggleAvailableUserSelection = (userId: string) => {
+    const newSelection = new Set(selectedUsersForAdd);
+    if (newSelection.has(userId)) {
+      newSelection.delete(userId);
+    } else {
+      newSelection.add(userId);
+    }
+    setSelectedUsersForAdd(newSelection);
+  };
+
+  const handleBulkAddMembers = async () => {
+    if (!selectedGroup) return;
+    if (selectedUsersForAdd.size === 0) return;
+
+    setCreateLoading(true);
+    try {
+      const membersToAdd = Array.from(selectedUsersForAdd).map((userId) => ({
+        group_id: selectedGroup.id,
+        user_id: userId,
+      }));
+
+      const { error } = await supabase
+        .from("group_members")
+        .insert(membersToAdd);
+
+      if (error) throw error;
+
+      // Refresh members list
+      await loadGroupMembers(selectedGroup.id);
+
+      // Close modal and reset selection
+      setShowAddMemberModal(false);
+      setSelectedUsersForAdd(new Set());
+      setAddMemberSearchQuery("");
+
+      Alert.alert(
+        "Success",
+        `Added ${membersToAdd.length} members to the group`
+      );
+    } catch (error: any) {
+      console.error("Error adding members:", error);
+      Alert.alert("Error", error.message || "Failed to add members to group");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const renderAvailableUserSelectionItem = ({ item }: { item: User }) => {
+    const isSelected = selectedUsersForAdd.has(item.user_id);
+    const initials = getInitials(item.full_name);
+
+    return (
+      <TouchableOpacity
+        style={[styles.userItem, { borderBottomColor: colors.border }]}
+        onPress={() => toggleAvailableUserSelection(item.user_id)}
+      >
+        <View style={styles.userInfoContainer}>
+          <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <View style={styles.userInfo}>
+            <Text style={[styles.userName, { color: colors.text }]}>
+              {item.full_name}
+            </Text>
+            <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
+              {item.email}
+            </Text>
+            <Text
+              style={[
+                styles.userEmail,
+                { color: colors.placeholderText, fontStyle: "italic" },
+              ]}
+            >
+              Role: {formatUserRoles(item.user_roles)}
+            </Text>
+          </View>
+        </View>
+        <Ionicons
+          name={isSelected ? "checkbox" : "square-outline"}
+          size={24}
+          color={isSelected ? colors.primary : colors.placeholderText}
+        />
+      </TouchableOpacity>
+    );
+  };
 
   if (!isAdmin) {
     return (
@@ -1161,7 +1417,6 @@ export default function GroupsScreen() {
           )}
         </View>
       </ScrollView>
-
       {/* Create Group Modal */}
       <Modal
         animationType="slide"
@@ -1279,10 +1534,91 @@ export default function GroupsScreen() {
             />
           </View>
 
-          <FlatList
-            data={filteredUsers}
+          <SectionList
+            sections={groupedUsers.map((section) => ({
+              ...section,
+              data: collapsedSections.has(section.title) ? [] : section.data,
+              // Pass a unique key to force re-render when collapsed state changes?
+              // No, keyExtractor handles items. But we assume 'data' change triggers render.
+            }))}
             keyExtractor={(item) => item.user_id}
             renderItem={renderUserSelectionItem}
+            renderSectionHeader={({
+              section: { title, data },
+            }: {
+              section: { title: string; data: User[] };
+            }) => {
+              // Find original data to get full count and selection state
+              const originalGroup = groupedUsers.find((g) => g.title === title);
+              const originalData = originalGroup?.data || [];
+              const count = originalData.length;
+              const isCollapsed = collapsedSections.has(title);
+              const isAllSelected =
+                count > 0 &&
+                originalData.every((u) =>
+                  selectedUsersForCreate.has(u.user_id)
+                );
+
+              return (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => toggleSection(title)}
+                  style={[
+                    styles.sectionHeader,
+                    { backgroundColor: colors.card, paddingVertical: 12 },
+                  ]}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <Ionicons
+                      name={isCollapsed ? "chevron-forward" : "chevron-down"}
+                      size={18}
+                      color={colors.text}
+                    />
+                    <Text
+                      style={[styles.sectionHeaderText, { color: colors.text }]}
+                    >
+                      {title}
+                      <Text
+                        style={{
+                          color: colors.placeholderText,
+                          fontWeight: "normal",
+                          marginLeft: 4,
+                          fontSize: 12,
+                        }}
+                      >
+                        {" "}
+                        ({count})
+                      </Text>
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isAllSelected) {
+                        deselectAllRole(originalData);
+                      } else {
+                        selectAllRole(originalData);
+                      }
+                    }}
+                    style={{ padding: 4 }}
+                  >
+                    <Ionicons
+                      name={isAllSelected ? "checkbox" : "square-outline"}
+                      size={22}
+                      color={
+                        isAllSelected ? colors.primary : colors.placeholderText
+                      }
+                    />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              );
+            }}
             style={styles.userSelectionList}
             nestedScrollEnabled={true}
           />
@@ -1318,7 +1654,6 @@ export default function GroupsScreen() {
           </View>
         </View>
       </Modal>
-
       {/* Group Members Modal */}
       <Modal
         animationType="slide"
@@ -1417,7 +1752,7 @@ export default function GroupsScreen() {
             style={[styles.modalHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.modalTitle, { color: colors.text }]}>
-              Add Member
+              Add Members
             </Text>
             <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>
               <Ionicons name="close" size={24} color={colors.text} />
@@ -1441,60 +1776,88 @@ export default function GroupsScreen() {
             />
           </View>
 
-          {/* Add role filter chips */}
-          <View style={styles.compactFilterContainer}>
-            <Ionicons
-              name="filter"
-              size={16}
-              color={colors.placeholderText}
-              style={{ marginRight: 8 }}
-            />
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterChipsContainer}
-            >
-              {[
-                { label: "All", value: "all" },
-                { label: "Admin", value: "admin" },
-                { label: "Super Admin", value: "superadmin" },
-                { label: "Parent", value: "parent" },
-                { label: "Teacher", value: "teacher" },
-                { label: "Student", value: "student" },
-              ].map((role) => (
-                <TouchableOpacity
-                  key={role.value}
-                  style={[
-                    styles.filterChip,
-                    addMemberRoleFilter === role.value && {
-                      backgroundColor: colors.primary,
-                    },
-                    addMemberRoleFilter !== role.value && {
-                      backgroundColor: colors.border,
-                    },
-                  ]}
-                  onPress={() => setAddMemberRoleFilter(role.value)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      addMemberRoleFilter === role.value && { color: "#fff" },
-                      addMemberRoleFilter !== role.value && {
-                        color: colors.text,
-                      },
-                    ]}
-                  >
-                    {role.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
-          <FlatList
-            data={filteredAvailableUsers}
+          <SectionList
+            sections={groupedAvailableUsers.map((section) => ({
+              ...section,
+              data: collapsedSections.has(section.title) ? [] : section.data,
+            }))}
             keyExtractor={(item) => item.user_id}
-            renderItem={renderAvailableUserItem}
+            renderItem={renderAvailableUserSelectionItem}
+            renderSectionHeader={({
+              section: { title, data },
+            }: {
+              section: { title: string; data: User[] };
+            }) => {
+              const originalGroup = groupedAvailableUsers.find(
+                (g) => g.title === title
+              );
+              const originalData = originalGroup?.data || [];
+              const count = originalData.length;
+              const isCollapsed = collapsedSections.has(title);
+              const isAllSelected =
+                count > 0 &&
+                originalData.every((u) => selectedUsersForAdd.has(u.user_id));
+
+              return (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => toggleSection(title)}
+                  style={[
+                    styles.sectionHeader,
+                    { backgroundColor: colors.card, paddingVertical: 12 },
+                  ]}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <Ionicons
+                      name={isCollapsed ? "chevron-forward" : "chevron-down"}
+                      size={18}
+                      color={colors.text}
+                    />
+                    <Text
+                      style={[styles.sectionHeaderText, { color: colors.text }]}
+                    >
+                      {title}
+                      <Text
+                        style={{
+                          color: colors.placeholderText,
+                          fontWeight: "normal",
+                          marginLeft: 4,
+                          fontSize: 12,
+                        }}
+                      >
+                        {" "}
+                        ({count})
+                      </Text>
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isAllSelected) {
+                        deselectAllAvailableRole(originalData);
+                      } else {
+                        selectAllAvailableRole(originalData);
+                      }
+                    }}
+                    style={{ padding: 4 }}
+                  >
+                    <Ionicons
+                      name={isAllSelected ? "checkbox" : "square-outline"}
+                      size={22}
+                      color={
+                        isAllSelected ? colors.primary : colors.placeholderText
+                      }
+                    />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              );
+            }}
             style={styles.membersList}
             ListEmptyComponent={
               <View style={styles.emptyMembers}>
@@ -1509,6 +1872,41 @@ export default function GroupsScreen() {
               </View>
             }
           />
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[
+                styles.modalButton,
+                {
+                  backgroundColor:
+                    selectedUsersForAdd.size > 0
+                      ? colors.primary
+                      : colors.border,
+                },
+              ]}
+              onPress={handleBulkAddMembers}
+              disabled={selectedUsersForAdd.size === 0 || createLoading}
+            >
+              {createLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text
+                  style={[
+                    styles.createButtonText,
+                    {
+                      color:
+                        selectedUsersForAdd.size > 0
+                          ? "#fff"
+                          : colors.placeholderText,
+                    },
+                  ]}
+                >
+                  Add {selectedUsersForAdd.size} Selected Member
+                  {selectedUsersForAdd.size !== 1 ? "s" : ""}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1591,10 +1989,10 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   groupHeader: {
     flexDirection: "row",
@@ -1818,6 +2216,24 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
   },
+  userInfoContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  avatarText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
+  },
   userInfo: {
     flex: 1,
   },
@@ -1864,23 +2280,30 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 16,
   },
-  compactFilterContainer: {
+
+  sectionHeader: {
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
-    height: 40,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginTop: 10,
+    marginBottom: 5,
   },
-  filterChipsContainer: {
-    alignItems: "center",
-    paddingRight: 16,
+  sectionHeaderText: {
+    fontSize: 14,
+    fontWeight: "700",
+    textTransform: "uppercase",
   },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
+  sectionHeaderActions: {
+    flexDirection: "row",
+    gap: 12,
   },
-  filterChipText: {
+  sectionActionButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  sectionActionText: {
     fontSize: 12,
     fontWeight: "600",
   },
