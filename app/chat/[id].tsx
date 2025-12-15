@@ -123,6 +123,45 @@ const MessageItem = React.memo(
     const alignRight = !isAnnouncementGroup && isMyMessage;
     const isImage = item.attachment_type?.startsWith("image/");
 
+    // Read Receipt Logic
+    const renderReadReceipt = () => {
+      if (!isMyMessage) return null;
+
+      // If announcement group, maybe hide or show differently? For now show same.
+
+      // Determine icon based on read status
+      // We need to know:
+      // 1. Sent (default)
+      // 2. Read by some
+      // 3. Read by all
+
+      // Passed via props now
+      const { readCount, totalMembers, isReadByAll } = (item as any)
+        .readInfo || { readCount: 0, totalMembers: 0, isReadByAll: false };
+
+      if (isReadByAll) {
+        return (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginLeft: 4,
+            }}
+          >
+            <Ionicons name="checkmark-done" size={16} color="#4dabf5" />
+          </View>
+        );
+      }
+
+      return (
+        <View
+          style={{ flexDirection: "row", alignItems: "center", marginLeft: 4 }}
+        >
+          <Ionicons name="checkmark" size={16} color="rgba(255,255,255,0.7)" />
+        </View>
+      );
+    };
+
     return (
       <View
         style={[
@@ -221,16 +260,28 @@ const MessageItem = React.memo(
             {item.content}
           </Text>
 
-          <Text
-            style={[
-              styles.timestamp,
-              alignRight
-                ? { color: "rgba(255, 255, 255, 0.7)" }
-                : { color: colors.placeholderText },
-            ]}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 4,
+              marginTop: 4,
+            }}
           >
-            {formatTime(item.created_at)}
-          </Text>
+            <Text
+              style={[
+                styles.timestamp,
+                alignRight
+                  ? { color: "rgba(255, 255, 255, 0.7)" }
+                  : { color: colors.placeholderText },
+                { marginTop: 0 },
+              ]}
+            >
+              {formatTime(item.created_at)}
+            </Text>
+            {renderReadReceipt()}
+          </View>
 
           {showAvatar && (
             <View
@@ -279,6 +330,9 @@ export default function ChatScreen() {
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [readStatuses, setReadStatuses] = useState<{
+    [userId: string]: string;
+  }>({});
 
   // Hooks
   const { user, profile, schoolId } = useAuth();
@@ -335,12 +389,24 @@ export default function ChatScreen() {
       await checkMessagePermissions(group);
       fetchMessages(true);
       setupRealtimeSubscription();
+      // Mark as read immediately on enter
+      markAsRead();
+      // Fetch initial read statuses
+      fetchReadStatuses();
     };
     initChat();
   }, [chatId]);
 
+  // Mark as read when messages update
+  useEffect(() => {
+    if (messages.length > 0) {
+      markAsRead();
+    }
+  }, [messages.length]);
+
   // Logic
   const setupRealtimeSubscription = () => {
+    // 1. Typing indicators
     const typingSubscription = supabase
       .channel("typing-events")
       .on(
@@ -369,8 +435,27 @@ export default function ChatScreen() {
       )
       .subscribe();
 
+    // 2. Read receipts (group_reads)
+    const readReceiptsSubscription = supabase
+      .channel("read-receipts")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "group_reads",
+          filter: `group_id=eq.${chatId}`,
+        },
+        () => {
+          // When any read status changes, re-fetch all to be safe and simple
+          fetchReadStatuses();
+        }
+      )
+      .subscribe();
+
     return () => {
       typingSubscription.unsubscribe();
+      readReceiptsSubscription.unsubscribe();
     };
   };
 
@@ -394,6 +479,41 @@ export default function ChatScreen() {
         .from("typing_indicators")
         .delete()
         .eq("user_id", profile?.user_id);
+    }
+  };
+
+  const markAsRead = async () => {
+    if (!profile?.user_id) return;
+    try {
+      await supabase.from("group_reads").upsert(
+        {
+          group_id: chatId,
+          user_id: profile.user_id,
+          last_read_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,group_id" }
+      );
+    } catch (error) {
+      console.error("Error marking as read:", error);
+    }
+  };
+
+  const fetchReadStatuses = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("group_reads")
+        .select("user_id, last_read_at")
+        .eq("group_id", chatId);
+
+      if (error) throw error;
+
+      const statusMap: { [userId: string]: string } = {};
+      data?.forEach((item) => {
+        statusMap[item.user_id] = item.last_read_at;
+      });
+      setReadStatuses(statusMap);
+    } catch (error) {
+      console.error("Error fetching read statuses:", error);
     }
   };
 
@@ -654,9 +774,39 @@ export default function ChatScreen() {
         !nextMessage ||
         nextMessage.profiles?.full_name !== item.profiles?.full_name;
 
+      // Calculate read status
+      const msgDate = new Date(item.created_at);
+      let readCount = 0;
+      const otherMembersCount = Math.max(0, groupMembers.length - 1); // Exclude self
+
+      if (profile?.user_id) {
+        readCount = Object.entries(readStatuses).filter(
+          ([uid, time]: [string, string]) => {
+            return uid !== profile.user_id && new Date(time) >= msgDate;
+          }
+        ).length;
+      }
+
+      // Cap readCount at otherMembersCount to avoid weirdness if member list is stale
+      readCount = Math.min(readCount, otherMembersCount);
+
+      // If group has 0 other members (just me), isReadByAll is false or effectively irrelevant, but let's say true?
+      // Actually if just me, no one to read.
+      const isReadByAll =
+        otherMembersCount > 0 && readCount >= otherMembersCount;
+
       return (
         <MessageItem
-          item={item}
+          item={
+            {
+              ...item,
+              readInfo: {
+                readCount,
+                totalMembers: otherMembersCount,
+                isReadByAll,
+              },
+            } as any
+          }
           user={user}
           colors={colors}
           isAnnouncementGroup={isAnnouncementGroup}
@@ -664,7 +814,15 @@ export default function ChatScreen() {
         />
       );
     },
-    [messages, user, colors, isAnnouncementGroup]
+    [
+      messages,
+      user,
+      colors,
+      isAnnouncementGroup,
+      readStatuses,
+      groupMembers,
+      profile,
+    ]
   );
 
   if (checkingPermission) {
