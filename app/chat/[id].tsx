@@ -1,4 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import { decode } from "base64-arraybuffer";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { canSendMessages } from "lib/message-permissions";
 import { useEffect, useRef, useState } from "react";
@@ -8,8 +11,9 @@ import {
   Animated,
   Dimensions,
   FlatList,
-  Keyboard,
+  Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   SafeAreaView,
@@ -21,18 +25,20 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import EmojiSelector, { Categories } from "react-native-emoji-selector";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
 import { getThemeColors } from "../../themes";
 
-const { width, height } = Dimensions.get("window");
+const { width } = Dimensions.get("window");
 
 interface Message {
   id: string;
   content: string;
   created_at: string;
+  attachment_url?: string;
+  attachment_type?: string;
+  attachment_name?: string;
   profiles: {
     full_name: string;
     email: string;
@@ -49,11 +55,20 @@ interface GroupMember {
   } | null;
 }
 
+interface SelectedFile {
+  uri: string;
+  name: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export default function ChatScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [infoVisible, setInfoVisible] = useState(false);
   const [groupInfo, setGroupInfo] = useState<any>(null);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
@@ -287,6 +302,9 @@ export default function ChatScreen() {
         id,
         content,
         created_at,
+        attachment_url,
+        attachment_type,
+        attachment_name,
         profiles (full_name, email)
       `
         )
@@ -334,8 +352,68 @@ export default function ChatScreen() {
     }
   };
 
+  const pickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const asset = result.assets[0];
+      setSelectedFile({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType,
+        size: asset.size,
+      });
+    } catch (error) {
+      console.error("Error picking document:", error);
+      Alert.alert("Error", "Failed to pick document");
+    }
+  };
+
+  const uploadFile = async () => {
+    if (!selectedFile || !profile?.user_id) return null;
+
+    try {
+      setIsUploading(true);
+      const ext = selectedFile.name.split(".").pop();
+      const fileName = `${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(7)}.${ext}`;
+      const filePath = `${chatId}/${fileName}`;
+
+      const base64 = await FileSystem.readAsStringAsync(selectedFile.uri, {
+        encoding: "base64",
+      });
+
+      const { error: uploadError } = await supabase.storage
+        .from("chat-attachments")
+        .upload(filePath, decode(base64), {
+          contentType: selectedFile.mimeType || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage
+        .from("chat-attachments")
+        .getPublicUrl(filePath);
+
+      return data.publicUrl;
+    } catch (error) {
+      console.error("Error uploading file:", error);
+      Alert.alert("Error", "Failed to upload file");
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const sendMessage = async () => {
-    if (!newMessage.trim() || sending) return;
+    if ((!newMessage.trim() && !selectedFile) || sending || isUploading) return;
 
     if (!canSend) {
       Alert.alert(
@@ -348,15 +426,27 @@ export default function ChatScreen() {
     setSending(true);
     handleTyping(false);
 
+    let attachmentUrl = null;
+    if (selectedFile) {
+      attachmentUrl = await uploadFile();
+      if (!attachmentUrl) {
+        setSending(false);
+        return;
+      }
+    }
+
     // Insert the message
     const { data: newMessageData, error } = await supabase
       .from("messages")
       .insert([
         {
-          content: newMessage,
+          content: newMessage || (selectedFile ? "Sent an attachment" : ""),
           user_id: profile?.user_id, // Use profile.user_id instead of user.id to match foreign key constraint
           group_id: chatId,
           school_id: schoolId,
+          attachment_url: attachmentUrl,
+          attachment_type: selectedFile?.mimeType || "application/octet-stream",
+          attachment_name: selectedFile?.name,
         },
       ])
       .select("*, profiles(full_name, email)")
@@ -379,6 +469,7 @@ export default function ChatScreen() {
 
     setMessages((prev) => [...prev, formattedMessage]);
     setNewMessage("");
+    setSelectedFile(null);
     setSending(false);
 
     try {
@@ -387,7 +478,7 @@ export default function ChatScreen() {
         "send-push-message",
         {
           body: {
-            message: newMessage,
+            message: newMessage || "Sent an attachment",
             group_id: chatId,
             school_id: schoolId,
             sender_id: profile!.user_id, // Use profile.user_id instead of user.id
@@ -452,6 +543,8 @@ export default function ChatScreen() {
       !nextMessage ||
       nextMessage.profiles?.full_name !== item.profiles?.full_name;
 
+    const isImage = item.attachment_type?.startsWith("image/");
+
     return (
       <View
         style={[
@@ -470,6 +563,42 @@ export default function ChatScreen() {
             <Text style={styles.senderName}>
               {item.profiles?.full_name || item.profiles?.email || "Unknown"}
             </Text>
+          )}
+
+          {item.attachment_url && (
+            <View style={styles.attachmentContainer}>
+              {isImage ? (
+                <TouchableOpacity
+                  onPress={() => Linking.openURL(item.attachment_url!)}
+                >
+                  <Image
+                    source={{ uri: item.attachment_url }}
+                    style={styles.attachedImage}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.fileAttachment}
+                  onPress={() => Linking.openURL(item.attachment_url!)}
+                >
+                  <View style={styles.fileIconContainer}>
+                    <Ionicons name="document-text" size={24} color="white" />
+                  </View>
+                  <View style={styles.fileInfo}>
+                    <Text
+                      style={[styles.fileName, { color: "white" }]}
+                      numberOfLines={1}
+                    >
+                      {item.attachment_name || "Attachment"}
+                    </Text>
+                    <Text style={[styles.fileType, { color: "white" }]}>
+                      Click to view
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
 
           <Text
@@ -666,6 +795,42 @@ export default function ChatScreen() {
               },
             ]}
           >
+            {selectedFile && (
+              <View
+                style={[
+                  styles.selectedFileContainer,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={styles.selectedFileInfo}>
+                  <Ionicons
+                    name={
+                      selectedFile.mimeType?.startsWith("image/")
+                        ? "image"
+                        : "document-text"
+                    }
+                    size={20}
+                    color={colors.primary}
+                  />
+                  <Text
+                    style={[styles.selectedFileName, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {selectedFile.name}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setSelectedFile(null)}
+                  style={styles.removeFileButton}
+                >
+                  <Ionicons name="close-circle" size={20} color="red" />
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View
               style={[
                 styles.inputWrapper,
@@ -673,22 +838,11 @@ export default function ChatScreen() {
               ]}
             >
               <TouchableOpacity
-                style={styles.emojiButton}
-                onPress={() => {
-                  if (showEmojiPicker) {
-                    setShowEmojiPicker(false);
-                    textInputRef.current?.focus();
-                  } else {
-                    Keyboard.dismiss();
-                    setShowEmojiPicker(true);
-                  }
-                }}
+                style={styles.attachButton}
+                onPress={pickDocument}
+                disabled={isUploading}
               >
-                <Ionicons
-                  name={showEmojiPicker ? "keypad-outline" : "happy-outline"}
-                  size={24}
-                  color={colors.text}
-                />
+                <Ionicons name="attach" size={24} color={colors.text} />
               </TouchableOpacity>
 
               <TextInput
@@ -717,27 +871,27 @@ export default function ChatScreen() {
                 onPress={sendMessage}
                 style={[
                   styles.sendButton,
-                  newMessage.trim() && !sending
+                  (newMessage.trim() || selectedFile) && !sending
                     ? styles.sendButtonActive
                     : styles.sendButtonInactive,
                   {
                     backgroundColor:
-                      newMessage.trim() && !sending
+                      (newMessage.trim() || selectedFile) && !sending
                         ? colors.primary
                         : "transparent",
                   },
                 ]}
-                disabled={!newMessage.trim() || sending}
+                disabled={(!newMessage.trim() && !selectedFile) || sending}
                 activeOpacity={0.8}
               >
-                {sending ? (
+                {sending || isUploading ? (
                   <ActivityIndicator size="small" color={colors.text} />
                 ) : (
                   <Ionicons
                     name="send"
                     size={20}
                     color={
-                      newMessage.trim() && !sending
+                      (newMessage.trim() || selectedFile) && !sending
                         ? colors.text
                         : colors.placeholderText
                     }
@@ -745,26 +899,6 @@ export default function ChatScreen() {
                 )}
               </TouchableOpacity>
             </View>
-
-            {/* Emoji Picker */}
-            {showEmojiPicker && (
-              <View
-                style={[
-                  styles.emojiPickerContainer,
-                  { borderTopColor: colors.border },
-                ]}
-              >
-                <EmojiSelector
-                  onEmojiSelected={handleEmojiSelect}
-                  category={Categories.all}
-                  columns={8}
-                  showSearchBar={false}
-                  showHistory={true}
-                  showTabs={true}
-                  showSectionTitles={true}
-                />
-              </View>
-            )}
           </Animated.View>
         )}
 
@@ -1217,9 +1351,38 @@ const styles = StyleSheet.create({
   otherTimestamp: {
     color: "#8E8E93",
   },
-  inputContainer: {
+  attachmentContainer: {
+    marginBottom: 8,
+  },
+  attachedImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
+  },
+  fileAttachment: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.05)",
+    padding: 10,
+    borderRadius: 8,
+  },
+  fileIconContainer: {
+    marginRight: 10,
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  fileType: {
+    fontSize: 12,
+  },
+  inputContainer: {
+    flexDirection: "column",
     padding: 10,
     borderTopWidth: 1,
   },
@@ -1230,7 +1393,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
   },
-
+  selectedFileContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  selectedFileInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  selectedFileName: {
+    marginLeft: 8,
+    fontSize: 14,
+    flex: 1,
+  },
+  removeFileButton: {
+    padding: 4,
+  },
+  attachButton: {
+    padding: 8,
+    marginRight: 4,
+  },
   emojiButton: {
     padding: 8,
     marginRight: 4,

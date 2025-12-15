@@ -7,12 +7,12 @@
     "slug": "atlas-school-management",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/mind_dark.png",
     "userInterfaceStyle": "light",
     "scheme": "mindsync",
     "projectId": "c9eaab9b-61b5-40e0-b0b3-e7774aee3b5c",
     "splash": {
-      "image": "./assets/images/splash_icon.png",
+      "image": "./assets/images/mind_dark.png",
       "resizeMode": "contain",
       "backgroundColor": "#1E40AF"
     },
@@ -24,7 +24,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive_icon.png",
+        "foregroundImage": "./assets/images/mind_dark.png",
         "backgroundColor": "#1E40AF"
       },
       "package": "com.mindsync.schoolmanagement"

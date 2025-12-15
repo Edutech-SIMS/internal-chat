@@ -109,9 +109,6 @@ export default function Login() {
 
               {/* Email Input */}
               <View style={styles.inputContainer}>
-                <View style={styles.inputIconContainer}>
-                  <Text style={styles.inputIcon}>✉️</Text>
-                </View>
                 <TextInput
                   placeholder="Email Address"
                   placeholderTextColor="#94A3B8"
@@ -125,9 +122,6 @@ export default function Login() {
 
               {/* Password Input */}
               <View style={styles.inputContainer}>
-                <View style={styles.inputIconContainer}>
-                  <Text style={styles.inputIcon}>🔒</Text>
-                </View>
                 <TextInput
                   placeholder="Password"
                   placeholderTextColor="#94A3B8"
