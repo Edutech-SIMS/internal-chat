@@ -27,10 +27,12 @@ interface Student {
   profile_picture_url?: string;
 }
 
-interface ClassInfo {
-  id: string;
+interface ClassAssignment {
+  assignment_id: string;
+  class_id: string;
   name: string;
-  subject: string;
+  grade_level: string;
+  students: Student[];
 }
 
 export default function TeacherScreen() {
@@ -39,12 +41,21 @@ export default function TeacherScreen() {
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
 
-  const [students, setStudents] = useState<Student[]>([]);
-  const [classInfo, setClassInfo] = useState<ClassInfo | null>(null);
+  const [classAssignments, setClassAssignments] = useState<ClassAssignment[]>(
+    []
+  );
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [todayAttendance, setTodayAttendance] = useState<number>(0);
-  const [totalStudents, setTotalStudents] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [showClassPicker, setShowClassPicker] = useState(false);
+
+  // Computed values based on selected class
+  const selectedClass = classAssignments.find(
+    (c) => c.class_id === selectedClassId
+  );
+  const students = selectedClass?.students || [];
+  const totalStudents = students.length;
 
   useEffect(() => {
     if (user?.id && profile?.school_id) {
@@ -76,7 +87,8 @@ export default function TeacherScreen() {
         .from("teachers")
         .select("id, user_id")
         .eq("user_id", profile?.user_id)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (teacherError) {
         console.log("Error fetching teacher record:", teacherError);
@@ -90,8 +102,8 @@ export default function TeacherScreen() {
         return;
       }
 
-      // Step 2: Get class assignment using teacher_id
-      const { data: assignment, error: assignmentError } = await supabase
+      // Step 2: Get ALL class assignments for this teacher
+      const { data: assignments, error: assignmentError } = await supabase
         .from("teacher_assignments")
         .select(
           `
@@ -101,10 +113,10 @@ export default function TeacherScreen() {
             class_id,
             name,
             grade_level,
-            enrollments!enrollments_class_id_fkey!inner (
+            enrollments!enrollments_class_id_fkey (
               id,
               status,
-              students!enrollments_student_id_fkey!inner (
+              students!enrollments_student_id_fkey (
                 id,
                 student_id,
                 first_name,
@@ -117,53 +129,62 @@ export default function TeacherScreen() {
         )
         .eq("teacher_id", teacherRecord.id)
         .eq("assignment_type", "class_teacher")
-        .eq("status", "active")
-        .maybeSingle();
+        .eq("status", "active");
 
       if (assignmentError) {
-        console.error("Error fetching teacher assignment:", assignmentError);
+        console.error("Error fetching teacher assignments:", assignmentError);
         throw assignmentError;
       }
 
-      if (assignment && assignment.classes) {
-        const classData = assignment.classes as any;
+      if (assignments && assignments.length > 0) {
+        // Process all class assignments
+        const processedAssignments: ClassAssignment[] = assignments.map(
+          (assignment: any) => {
+            const classData = assignment.classes;
+            const studentList = (classData.enrollments || [])
+              .filter((e: any) => e.status === "active" && e.students)
+              .map((e: any) => ({
+                id: e.students.id,
+                student_id: e.students.student_id,
+                first_name: e.students.first_name,
+                last_name: e.students.last_name,
+                profile_picture_url: e.students.profile_picture_url,
+                class_level: classData.grade_level,
+              }));
 
-        // Set class info
-        setClassInfo({
-          id: assignment.class_id,
-          name: classData.name,
-          subject: `Grade ${classData.grade_level} - Homeroom`,
-        });
-
-        // Process students
-        if (classData.enrollments && classData.enrollments.length > 0) {
-          const studentList = classData.enrollments
-            .filter((e: any) => e.status === "active")
-            .map((e: any) => ({
-              id: e.students.id,
-              student_id: e.students.student_id,
-              first_name: e.students.first_name,
-              last_name: e.students.last_name,
-              profile_picture_url: e.students.profile_picture_url,
-              class_level: classData.grade_level,
-            }));
-
-          setStudents(studentList);
-          setTotalStudents(studentList.length);
-
-          // Fetch today's attendance count
-          const today = new Date().toISOString().split("T")[0];
-          const { count, error: attendanceError } = await supabase
-            .from("attendance")
-            .select("*", { count: "exact", head: true })
-            .eq("class_id", assignment.class_id)
-            .eq("date", today)
-            .eq("status", "present");
-
-          if (!attendanceError) {
-            setTodayAttendance(count || 0);
+            return {
+              assignment_id: assignment.assignment_id,
+              class_id: assignment.class_id,
+              name: classData.name,
+              grade_level: classData.grade_level,
+              students: studentList,
+            };
           }
+        );
+
+        setClassAssignments(processedAssignments);
+
+        // Auto-select first class if none selected
+        if (!selectedClassId && processedAssignments.length > 0) {
+          setSelectedClassId(processedAssignments[0].class_id);
         }
+
+        // Fetch today's attendance for the selected class
+        const classToCheck =
+          selectedClassId || processedAssignments[0].class_id;
+        const today = new Date().toISOString().split("T")[0];
+        const { count, error: attendanceError } = await supabase
+          .from("attendance")
+          .select("*", { count: "exact", head: true })
+          .eq("class_id", classToCheck)
+          .eq("date", today)
+          .eq("status", "present");
+
+        if (!attendanceError) {
+          setTodayAttendance(count || 0);
+        }
+      } else {
+        setClassAssignments([]);
       }
     } catch (error) {
       console.error("Error fetching teacher data:", error);
@@ -188,19 +209,116 @@ export default function TeacherScreen() {
         <Text style={[styles.teacherName, { color: colors.text }]}>
           {profile?.full_name || "Teacher"}
         </Text>
-        {classInfo && (
-          <Text style={[styles.className, { color: colors.placeholderText }]}>
-            {classInfo.name}
-          </Text>
-        )}
       </View>
-      <TouchableOpacity
-        style={[styles.profileButton, { backgroundColor: colors.card }]}
-      >
-        <Ionicons name="person" size={24} color={colors.primary} />
-      </TouchableOpacity>
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={{ fontSize: 15, color: colors.text, fontWeight: "600" }}>
+          {new Date().toLocaleDateString("en-US", {
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+          })}
+        </Text>
+        <View
+          style={{
+            backgroundColor: colors.primary + "20",
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: 4,
+            marginTop: 4,
+          }}
+        >
+          <Text
+            style={{ fontSize: 11, color: colors.primary, fontWeight: "700" }}
+          >
+            Term 1
+          </Text>
+        </View>
+      </View>
     </View>
   );
+
+  const renderClassSelector = () => {
+    if (classAssignments.length <= 1) return null;
+
+    return (
+      <View style={styles.section}>
+        <Text
+          style={[styles.sectionTitle, { color: colors.text, fontSize: 18 }]}
+        >
+          Select Class
+        </Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 12 }}
+        >
+          {classAssignments.map((assignment) => {
+            const isSelected = selectedClassId === assignment.class_id;
+            return (
+              <TouchableOpacity
+                key={assignment.class_id}
+                style={[
+                  styles.classCard,
+                  {
+                    backgroundColor: isSelected ? colors.primary : colors.card,
+                    borderColor: isSelected ? colors.primary : colors.border,
+                  },
+                ]}
+                onPress={() => {
+                  setSelectedClassId(assignment.class_id);
+                  fetchAttendanceForClass(assignment.class_id);
+                }}
+              >
+                <View style={styles.classCardContent}>
+                  <Ionicons
+                    name="school"
+                    size={20}
+                    color={isSelected ? "white" : colors.primary}
+                  />
+                  <View>
+                    <Text
+                      style={[
+                        styles.classCardTitle,
+                        { color: isSelected ? "white" : colors.text },
+                      ]}
+                    >
+                      {assignment.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.classCardSubtitle,
+                        {
+                          color: isSelected
+                            ? "rgba(255,255,255,0.8)"
+                            : colors.placeholderText,
+                        },
+                      ]}
+                    >
+                      {assignment.students.length} Students
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const fetchAttendanceForClass = async (classId: string) => {
+    const today = new Date().toISOString().split("T")[0];
+    const { count, error } = await supabase
+      .from("attendance")
+      .select("*", { count: "exact", head: true })
+      .eq("class_id", classId)
+      .eq("date", today)
+      .eq("status", "present");
+
+    if (!error) {
+      setTodayAttendance(count || 0);
+    }
+  };
 
   const renderStats = () => (
     <View style={styles.statsContainer}>
@@ -239,63 +357,6 @@ export default function TeacherScreen() {
         <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
           Attendance
         </Text>
-      </View>
-    </View>
-  );
-
-  const renderQuickActions = () => (
-    <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>
-        Quick Actions
-      </Text>
-      <View style={styles.quickActionsGrid}>
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={handleTakeAttendance}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
-            <Ionicons name="calendar" size={24} color="#007AFF" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Take Attendance
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={handleRecordAssessment}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e6fffa" }]}>
-            <Ionicons name="create" size={24} color="#00C7BE" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Record Assessment
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={handleMessageParents}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#fff0e6" }]}>
-            <Ionicons name="chatbubbles" size={24} color="#FF9500" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Message Parents
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() =>
-            Alert.alert("Coming Soon", "More features coming soon")
-          }
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#f3e5f5" }]}>
-            <Ionicons name="ellipsis-horizontal" size={24} color="#9c27b0" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>More</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -383,8 +444,9 @@ export default function TeacherScreen() {
         }
       >
         {renderHeader()}
+        {renderClassSelector()}
         {renderStats()}
-        {renderQuickActions()}
+
         {renderStudentList()}
       </ScrollView>
     </SafeAreaView>
@@ -481,36 +543,31 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 12,
   },
-  quickActionsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  actionButton: {
-    width: "48%",
+  classCard: {
     padding: 16,
     borderRadius: 16,
-    marginBottom: 16,
-    alignItems: "center",
+    borderWidth: 1,
+    minWidth: 160,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 4,
     elevation: 2,
   },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: "center",
+  classCardContent: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    gap: 12,
   },
-  actionText: {
+  classCardTitle: {
+    fontSize: 16,
     fontWeight: "600",
-    fontSize: 14,
-    textAlign: "center",
+    marginBottom: 2,
   },
+  classCardSubtitle: {
+    fontSize: 12,
+  },
+
   studentItem: {
     flexDirection: "row",
     alignItems: "center",

@@ -24,6 +24,13 @@ interface StudentAttendance {
   student_number: string;
   status: "present" | "absent" | "late" | "excused";
   notes?: string;
+  is_marked?: boolean;
+}
+
+interface ClassAssignment {
+  assignment_id: string;
+  class_id: string;
+  name: string;
 }
 
 export default function AttendanceScreen() {
@@ -37,11 +44,73 @@ export default function AttendanceScreen() {
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0]
   );
-  const [classInfo, setClassInfo] = useState<any>(null);
+
+  // Teacher Class Data
+  const [classAssignments, setClassAssignments] = useState<ClassAssignment[]>(
+    []
+  );
+  const [expandedNoteIds, setExpandedNoteIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
+
+  // Bulk Selection State
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(
+    new Set()
+  );
+  const selectionMode = selectedStudentIds.size > 0;
+
+  const toggleNote = (studentId: string) => {
+    setExpandedNoteIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(studentId)) {
+        newSet.delete(studentId);
+      } else {
+        newSet.add(studentId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelection = (studentId: string) => {
+    setSelectedStudentIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(studentId)) {
+        newSet.delete(studentId);
+      } else {
+        newSet.add(studentId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleBulkMark = (
+    status: "present" | "absent" | "late" | "excused"
+  ) => {
+    setStudents((prev) =>
+      prev.map((s) =>
+        selectedStudentIds.has(s.student_id) ? { ...s, status } : s
+      )
+    );
+    setSelectedStudentIds(new Set()); // Exit selection mode
+  };
+
+  const selectAll = () => {
+    if (selectedStudentIds.size === students.length) {
+      setSelectedStudentIds(new Set());
+    } else {
+      setSelectedStudentIds(new Set(students.map((s) => s.student_id)));
+    }
+  };
+
+  // Parent Data
+  const [classInfo, setClassInfo] = useState<any>(null); // Kept for parent view or legacy
   const [refreshing, setRefreshing] = useState(false);
 
+  // Computed
   const isParent = hasRole("parent");
   const isTeacher = hasRole("teacher");
+  const activeClassId = selectedClassId || (classInfo?.id as string);
 
   useEffect(() => {
     if (isTeacher) {
@@ -49,7 +118,9 @@ export default function AttendanceScreen() {
     } else if (isParent) {
       loadParentAttendance();
     }
-  }, [isTeacher, isParent, selectedDate]);
+  }, [isTeacher, isParent, selectedDate, selectedClassId]);
+
+  // ... (loadParentAttendance and loadTeacherAttendance are above or below)
 
   const loadParentAttendance = async (isRefreshing = false) => {
     try {
@@ -130,7 +201,8 @@ export default function AttendanceScreen() {
         .select("id")
         .eq("user_id", profile?.user_id)
         .eq("school_id", profile?.school_id)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (teacherError || !teacherRecord) {
         console.log("No teacher record found");
@@ -138,11 +210,12 @@ export default function AttendanceScreen() {
         return;
       }
 
-      // Step 2: Get class assignment
-      const { data: assignment, error: assignmentError } = await supabase
+      // Step 2: Get ALL class assignments
+      const { data: assignments, error: assignmentError } = await supabase
         .from("teacher_assignments")
         .select(
           `
+          assignment_id,
           class_id,
           classes!teacher_assignments_class_id_fkey!inner (
             class_id,
@@ -153,23 +226,54 @@ export default function AttendanceScreen() {
         .eq("teacher_id", teacherRecord.id)
         .eq("assignment_type", "class_teacher")
         .eq("status", "active")
-        .eq("school_id", profile?.school_id)
-        .maybeSingle();
+        .eq("school_id", profile?.school_id);
 
       if (assignmentError) throw assignmentError;
 
-      if (!assignment) {
+      if (!assignments || assignments.length === 0) {
         setLoading(false);
         return;
       }
 
-      const classData = assignment.classes as any;
-      setClassInfo({
-        id: assignment.class_id,
-        name: classData.name,
-      });
+      // Process assignments
+      const loadedAssignments: ClassAssignment[] = assignments.map(
+        (a: any) => ({
+          assignment_id: a.assignment_id,
+          class_id: a.class_id,
+          name: a.classes.name,
+        })
+      );
 
-      // Step 3: Fetch students
+      setClassAssignments(loadedAssignments);
+
+      // Determine target class
+      let targetClassId = selectedClassId;
+      if (!targetClassId && loadedAssignments.length > 0) {
+        targetClassId = loadedAssignments[0].class_id;
+        setSelectedClassId(targetClassId);
+      } else if (
+        targetClassId &&
+        !loadedAssignments.find((a) => a.class_id === targetClassId)
+      ) {
+        // If selected class is no longer valid, fallback
+        targetClassId = loadedAssignments[0].class_id;
+        setSelectedClassId(targetClassId);
+      }
+
+      if (!targetClassId) {
+        setLoading(false);
+        return;
+      }
+
+      // Update class info for display
+      const activeStats = loadedAssignments.find(
+        (a) => a.class_id === targetClassId
+      );
+      if (activeStats) {
+        setClassInfo({ id: activeStats.class_id, name: activeStats.name });
+      }
+
+      // Step 3: Fetch students for target class
       const { data: enrollments, error: studentsError } = await supabase
         .from("enrollments")
         .select(
@@ -183,7 +287,7 @@ export default function AttendanceScreen() {
           )
         `
         )
-        .eq("class_id", assignment.class_id)
+        .eq("class_id", targetClassId)
         .eq("status", "active")
         .eq("school_id", profile?.school_id);
 
@@ -194,7 +298,7 @@ export default function AttendanceScreen() {
         await supabase
           .from("attendance")
           .select("*")
-          .eq("class_id", assignment.class_id)
+          .eq("class_id", targetClassId)
           .eq("date", selectedDate)
           .eq("school_id", profile?.school_id);
 
@@ -217,6 +321,7 @@ export default function AttendanceScreen() {
             student_name: `${student.first_name} ${student.last_name}`,
             student_number: student.student_id,
             status: existingRecord?.status || "present",
+            is_marked: !!existingRecord,
             notes: existingRecord?.notes || "",
           };
         }) || [];
@@ -347,392 +452,462 @@ export default function AttendanceScreen() {
     );
   }
 
-  if (loading) {
-    return (
-      <SafeAreaView
-        style={[styles.safeArea, { backgroundColor: colors.background }]}
-      >
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.text }]}>
-            Loading attendance...
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (isTeacher && !classInfo) {
-    return (
-      <SafeAreaView
-        style={[styles.safeArea, { backgroundColor: colors.background }]}
-      >
-        <View style={styles.emptyContainer}>
-          <Ionicons name="school-outline" size={60} color={colors.primary} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>
-            You don't have a class assignment yet
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (isParent && students.length === 0) {
-    return (
-      <SafeAreaView
-        style={[styles.safeArea, { backgroundColor: colors.background }]}
-      >
-        <View style={styles.emptyContainer}>
-          <Ionicons name="people-outline" size={60} color={colors.primary} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>
-            No students linked to your account.
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  // Calculate Progress
+  const attendancePercentage =
+    stats.total > 0 ? Math.round((stats.present / stats.total) * 100) : 0;
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: colors.background }]}
     >
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: colors.card,
-            borderBottomColor: colors.border,
-          },
-        ]}
-      >
+      {/* 1. Top Bar (Title + Date) */}
+      <View style={styles.topBar}>
         <View>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>
-            {isTeacher ? "Take Attendance" : "My Children's Attendance"}
+          <Text style={[styles.screenTitle, { color: colors.text }]}>
+            Attendance
           </Text>
           <Text
-            style={[styles.headerSubtitle, { color: colors.placeholderText }]}
+            style={[styles.screenSubtitle, { color: colors.placeholderText }]}
           >
-            {isTeacher ? classInfo.name : "View attendance records"}
+            {selectedDate === new Date().toISOString().split("T")[0]
+              ? "Today"
+              : selectedDate}
           </Text>
         </View>
-        {isTeacher && (
+        <View style={styles.topBarActions}>
           <TouchableOpacity
-            onPress={markAllPresent}
-            style={[styles.markAllButton, { backgroundColor: colors.primary }]}
+            style={[styles.iconButton, { backgroundColor: colors.card }]}
+            onPress={() => {
+              /* Calendar logic would go here in full app, for now just input focus or similar */
+            }}
           >
-            <Text style={styles.markAllText}>All Present</Text>
+            <Ionicons name="calendar" size={20} color={colors.primary} />
           </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Date Selector */}
-      <View
-        style={[
-          styles.dateContainer,
-          {
-            backgroundColor: colors.card,
-            borderBottomColor: colors.border,
-          },
-        ]}
-      >
-        <View
-          style={[
-            styles.dateInputWrapper,
-            {
-              backgroundColor: colors.inputBackground,
-              borderColor: colors.border,
-            },
-          ]}
-        >
-          <Ionicons
-            name="calendar-outline"
-            size={20}
-            color={colors.placeholderText}
-          />
-          <TextInput
-            style={[styles.dateInput, { color: colors.text }]}
-            value={selectedDate}
-            onChangeText={setSelectedDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.placeholderText}
-          />
         </View>
-        <Text style={[styles.dateHelper, { color: colors.placeholderText }]}>
-          {selectedDate === new Date().toISOString().split("T")[0]
-            ? "Today"
-            : "Past Date"}
-        </Text>
       </View>
 
-      {/* Stats - Only show for teachers */}
+      {/* 2. Visual Stats Deck */}
       {isTeacher && (
-        <View style={styles.statsContainer}>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Text style={[styles.statValue, { color: colors.text }]}>
-              {stats.total}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-              Total
-            </Text>
+        <View style={[styles.statsDeck, { backgroundColor: colors.card }]}>
+          <View style={styles.progressCircleContainer}>
+            {/* Simple Circular Progress Simulation using Border */}
+            <View
+              style={[styles.progressCircle, { borderColor: colors.primary }]}
+            >
+              <Text style={[styles.progressText, { color: colors.text }]}>
+                {attendancePercentage}%
+              </Text>
+            </View>
           </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Text style={[styles.statValue, { color: "#28a745" }]}>
-              {stats.present}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-              Present
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Text style={[styles.statValue, { color: "#dc3545" }]}>
-              {stats.absent}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-              Absent
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Text style={[styles.statValue, { color: "#ffc107" }]}>
-              {stats.late}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.placeholderText }]}>
-              Late
-            </Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={[styles.statNumber, { color: colors.text }]}>
+                {stats.present}
+              </Text>
+              <Text
+                style={[styles.statCaption, { color: colors.placeholderText }]}
+              >
+                Present
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statNumber, { color: "#dc3545" }]}>
+                {stats.absent}
+              </Text>
+              <Text
+                style={[styles.statCaption, { color: colors.placeholderText }]}
+              >
+                Absent
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statNumber, { color: "#ffc107" }]}>
+                {stats.late}
+              </Text>
+              <Text
+                style={[styles.statCaption, { color: colors.placeholderText }]}
+              >
+                Late
+              </Text>
+            </View>
           </View>
         </View>
       )}
 
+      {/* 3. Class Selector (Horizontal Scroller) */}
+      {isTeacher && classAssignments.length > 1 && (
+        <View style={styles.classSelectorContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.classSelectorContent}
+          >
+            {classAssignments.map((assignment) => {
+              const isSelected = activeClassId === assignment.class_id;
+              return (
+                <TouchableOpacity
+                  key={assignment.class_id}
+                  style={[
+                    styles.largeClassChip,
+                    isSelected
+                      ? { backgroundColor: colors.primary }
+                      : {
+                          backgroundColor: colors.card,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                        },
+                  ]}
+                  onPress={() => setSelectedClassId(assignment.class_id)}
+                >
+                  <Text
+                    style={[
+                      styles.largeClassChipText,
+                      { color: isSelected ? "white" : colors.text },
+                    ]}
+                  >
+                    {assignment.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* 4. Student List (Enhanced) */}
       <ScrollView
         style={styles.scrollView}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        contentContainerStyle={styles.scrollContent}
       >
-        {students.map((student: any) => (
-          <View
-            key={student.student_id}
-            style={[styles.studentCard, { backgroundColor: colors.card }]}
-          >
-            <View style={styles.studentHeader}>
-              <View>
-                <Text style={[styles.studentName, { color: colors.text }]}>
-                  {student.student_name}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.text }]}>
+              Loading attendance...
+            </Text>
+          </View>
+        ) : isTeacher && !classInfo ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="school-outline" size={60} color={colors.primary} />
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              You don't have a class assignment yet.
+            </Text>
+          </View>
+        ) : isParent && students.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="people-outline" size={60} color={colors.primary} />
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              No students linked to your account.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {isTeacher && (
+              <View style={styles.listHeader}>
+                <Text style={[styles.listHeaderTitle, { color: colors.text }]}>
+                  Students ({stats.total})
                 </Text>
-                <Text
-                  style={[
-                    styles.studentNumber,
-                    { color: colors.placeholderText },
-                  ]}
-                >
-                  {student.student_number}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.statusBadge,
-                  {
-                    backgroundColor:
-                      (student.is_marked === false && isParent
-                        ? colors.border
-                        : getStatusColor(student.status)) + "20",
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusText,
-                    {
-                      color:
-                        student.is_marked === false && isParent
-                          ? colors.placeholderText
-                          : getStatusColor(student.status),
-                    },
-                  ]}
-                >
-                  {isParent && student.is_marked === false
-                    ? "NOT MARKED"
-                    : student.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-
-            {isTeacher ? (
-              // Teacher Controls
-              <>
-                <View style={styles.statusButtons}>
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                      },
-                      student.status === "present" && styles.statusButtonActive,
-                      student.status === "present" && {
-                        backgroundColor: "#28a745",
-                      },
-                    ]}
-                    onPress={() =>
-                      handleStatusChange(student.student_id, "present")
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        { color: colors.placeholderText },
-                        student.status === "present" &&
-                          styles.statusButtonTextActive,
-                      ]}
-                    >
-                      P
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                      },
-                      student.status === "absent" && styles.statusButtonActive,
-                      student.status === "absent" && {
-                        backgroundColor: "#dc3545",
-                      },
-                    ]}
-                    onPress={() =>
-                      handleStatusChange(student.student_id, "absent")
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        { color: colors.placeholderText },
-                        student.status === "absent" &&
-                          styles.statusButtonTextActive,
-                      ]}
-                    >
-                      A
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                      },
-                      student.status === "late" && styles.statusButtonActive,
-                      student.status === "late" && {
-                        backgroundColor: "#ffc107",
-                      },
-                    ]}
-                    onPress={() =>
-                      handleStatusChange(student.student_id, "late")
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        { color: colors.placeholderText },
-                        student.status === "late" &&
-                          styles.statusButtonTextActive,
-                      ]}
-                    >
-                      L
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                      },
-                      student.status === "excused" && styles.statusButtonActive,
-                      student.status === "excused" && {
-                        backgroundColor: "#6c757d",
-                      },
-                    ]}
-                    onPress={() =>
-                      handleStatusChange(student.student_id, "excused")
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        { color: colors.placeholderText },
-                        student.status === "excused" &&
-                          styles.statusButtonTextActive,
-                      ]}
-                    >
-                      E
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <TextInput
-                  style={[
-                    styles.notesInput,
-                    {
-                      backgroundColor: colors.inputBackground,
-                      borderColor: colors.border,
-                      color: colors.text,
-                    },
-                  ]}
-                  placeholder="Add notes..."
-                  placeholderTextColor={colors.placeholderText}
-                  value={student.notes || ""}
-                  onChangeText={(text) =>
-                    handleNotesChange(student.student_id, text)
-                  }
-                  multiline
-                />
-              </>
-            ) : (
-              // Parent View (Read Only)
-              <View>
-                {student.notes ? (
-                  <Text style={[styles.notesText, { color: colors.text }]}>
-                    Notes: {student.notes}
+                <TouchableOpacity onPress={markAllPresent}>
+                  <Text style={{ color: colors.primary, fontWeight: "600" }}>
+                    Mark All Present
                   </Text>
-                ) : null}
+                </TouchableOpacity>
               </View>
             )}
-          </View>
-        ))}
+
+            {students.map((student: any) => {
+              const isSelected = selectedStudentIds.has(student.student_id);
+              return (
+                <TouchableOpacity
+                  key={student.student_id}
+                  style={[
+                    styles.bigStudentCard,
+                    {
+                      backgroundColor: isSelected
+                        ? colors.primary + "10"
+                        : colors.card,
+                      borderColor: isSelected ? colors.primary : "transparent",
+                      borderWidth: isSelected ? 2 : 0,
+                    },
+                  ]}
+                  onLongPress={() =>
+                    isTeacher && toggleSelection(student.student_id)
+                  }
+                  onPress={() => {
+                    if (selectionMode) {
+                      toggleSelection(student.student_id);
+                    }
+                  }}
+                  activeOpacity={selectionMode ? 0.7 : 1}
+                  delayLongPress={300}
+                >
+                  {/* Top Row: Avatar + Name + Status Actions */}
+                  <View style={styles.cardHeader}>
+                    {/* Selection Checkbox (Visible in Selection Mode) */}
+                    {selectionMode && (
+                      <View style={{ marginRight: 12 }}>
+                        <Ionicons
+                          name={isSelected ? "checkbox" : "square-outline"}
+                          size={24}
+                          color={
+                            isSelected ? colors.primary : colors.placeholderText
+                          }
+                        />
+                      </View>
+                    )}
+
+                    <View
+                      style={[
+                        styles.bigAvatar,
+                        { backgroundColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.bigAvatarText, { color: colors.text }]}
+                      >
+                        {student.student_name.charAt(0)}
+                      </Text>
+                    </View>
+                    <View style={styles.infoColumn}>
+                      <Text style={[styles.cardName, { color: colors.text }]}>
+                        {student.student_name}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.cardId,
+                          { color: colors.placeholderText },
+                        ]}
+                      >
+                        {student.student_number}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Action Bar (Disabled pointer events when selecting to prevent accidental toggles, or just careful UI) */}
+                  {isTeacher && !selectionMode ? (
+                    <View style={styles.actionRow}>
+                      {/* Status Toggles */}
+                      <View style={styles.togglesContainer}>
+                        {(
+                          ["present", "absent", "late", "excused"] as const
+                        ).map((status) => {
+                          const isActive = student.status === status;
+                          let activeColor = colors.primary;
+                          let label = status.charAt(0).toUpperCase();
+
+                          if (status === "present") {
+                            activeColor = "#28a745";
+                            label = "Present";
+                          }
+                          if (status === "absent") {
+                            activeColor = "#dc3545";
+                            label = "Absent";
+                          }
+                          if (status === "late") {
+                            activeColor = "#ffc107";
+                            label = "Late";
+                          }
+                          if (status === "excused") {
+                            activeColor = "#6c757d";
+                            label = "Excused";
+                          }
+
+                          return (
+                            <TouchableOpacity
+                              key={status}
+                              style={[
+                                styles.pillToggle,
+                                isActive
+                                  ? { backgroundColor: activeColor }
+                                  : {
+                                      backgroundColor: colors.background,
+                                      borderWidth: 1,
+                                      borderColor: colors.border,
+                                    },
+                              ]}
+                              onPress={() =>
+                                handleStatusChange(student.student_id, status)
+                              }
+                            >
+                              <Text
+                                style={[
+                                  styles.pillText,
+                                  {
+                                    color: isActive ? "white" : colors.text,
+                                    fontWeight: isActive ? "700" : "500",
+                                  },
+                                ]}
+                              >
+                                {isActive ? label : label.charAt(0)}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {/* Note Action */}
+                      <TouchableOpacity
+                        style={styles.iconAction}
+                        onPress={() => toggleNote(student.student_id)}
+                      >
+                        <Ionicons
+                          name={
+                            student.notes ? "chatbox" : "chatbubble-outline"
+                          }
+                          size={22}
+                          color={
+                            student.notes
+                              ? colors.primary
+                              : colors.placeholderText
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  ) : isTeacher && selectionMode ? (
+                    <View style={{ paddingTop: 8, paddingBottom: 4 }}>
+                      <Text
+                        style={{
+                          color: colors.primary,
+                          fontStyle: "italic",
+                          fontSize: 13,
+                        }}
+                      >
+                        Selected - Use bottom bar to update
+                      </Text>
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.statusBadgeBig,
+                        {
+                          backgroundColor:
+                            getStatusColor(student.status) + "20",
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusTextBig,
+                          { color: getStatusColor(student.status) },
+                        ]}
+                      >
+                        {student.status.toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Notes Area */}
+                  {isTeacher &&
+                    (expandedNoteIds.has(student.student_id) ||
+                      student.status === "excused") &&
+                    !selectionMode && (
+                      <View style={styles.noteContainer}>
+                        <TextInput
+                          style={[
+                            styles.noteInput,
+                            {
+                              backgroundColor: colors.background,
+                              color: colors.text,
+                              borderColor: colors.border,
+                            },
+                          ]}
+                          placeholder="Add a note..."
+                          placeholderTextColor={colors.placeholderText}
+                          value={student.notes || ""}
+                          onChangeText={(text) =>
+                            handleNotesChange(student.student_id, text)
+                          }
+                        />
+                      </View>
+                    )}
+                  {isParent && student.notes && (
+                    <Text
+                      style={[
+                        styles.noteDisplay,
+                        { color: colors.placeholderText },
+                      ]}
+                    >
+                      {student.notes}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+            <View style={{ height: 100 }} />
+          </>
+        )}
       </ScrollView>
 
+      {/* Floating Footer (Save OR Bulk Actions) */}
       {isTeacher && (
         <View
           style={[
-            styles.footer,
-            {
-              backgroundColor: colors.card,
-              borderTopColor: colors.border,
-            },
+            styles.floatingFooter,
+            { backgroundColor: colors.card, borderTopColor: colors.border },
           ]}
         >
-          <TouchableOpacity
-            style={[
-              styles.saveButton,
-              { backgroundColor: colors.primary },
-              saving && styles.saveButtonDisabled,
-            ]}
-            onPress={handleSaveAttendance}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <>
-                <Ionicons name="save" size={20} color="white" />
-                <Text style={styles.saveButtonText}>Save Attendance</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {selectionMode ? (
+            <View style={styles.bulkActionContainer}>
+              <View style={styles.bulkActionHeader}>
+                <Text
+                  style={[styles.bulkSelectionCount, { color: colors.text }]}
+                >
+                  {selectedStudentIds.size} Selected
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setSelectedStudentIds(new Set())}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: "600" }}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.bulkButtonsRow}>
+                {(["present", "absent", "late", "excused"] as const).map(
+                  (status) => {
+                    let label = status.charAt(0).toUpperCase();
+                    let color = colors.primary;
+                    if (status === "present") color = "#28a745";
+                    if (status === "absent") color = "#dc3545";
+                    if (status === "late") color = "#ffc107";
+                    if (status === "excused") color = "#6c757d";
+
+                    return (
+                      <TouchableOpacity
+                        key={status}
+                        style={[
+                          styles.bulkActionButton,
+                          { backgroundColor: color },
+                        ]}
+                        onPress={() => handleBulkMark(status)}
+                      >
+                        <Text style={styles.bulkActionText}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  }
+                )}
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.bigSaveButton,
+                { backgroundColor: colors.primary },
+                saving && { opacity: 0.7 },
+              ]}
+              onPress={handleSaveAttendance}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.bigSaveButtonText}>Save Attendance</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </SafeAreaView>
@@ -740,6 +915,9 @@ export default function AttendanceScreen() {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
   },
@@ -752,175 +930,266 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  emptyText: {
-    marginTop: 16,
-    fontSize: 16,
-    textAlign: "center",
-  },
-  header: {
+  topBar: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  headerSubtitle: {
-    fontSize: 16,
-    marginTop: 4,
-  },
-  markAllButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  markAllText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  dateContainer: {
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  dateInputWrapper: {
-    flexDirection: "row",
     alignItems: "center",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 20,
   },
-  dateInput: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 16,
+  screenTitle: {
+    fontSize: 28,
+    fontWeight: "800",
   },
-  dateHelper: {
-    fontSize: 12,
-    marginTop: 8,
+  screenSubtitle: {
+    fontSize: 14,
+    marginTop: 4,
+    fontWeight: "500",
   },
-  statsContainer: {
+  topBarActions: {
     flexDirection: "row",
-    padding: 16,
     gap: 8,
   },
-  statCard: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 12,
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
     alignItems: "center",
+  },
+  statsDeck: {
+    padding: 12,
+    marginHorizontal: 16,
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.05)",
   },
-  statValue: {
-    fontSize: 28,
+  progressCircleContainer: {
+    marginRight: 16,
+  },
+  progressCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    borderWidth: 4,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  progressText: {
+    fontSize: 12,
     fontWeight: "bold",
   },
-  statLabel: {
-    fontSize: 12,
-    marginTop: 4,
+  progressLabel: {
+    fontSize: 8,
+    display: "none", // Hide label inside small circle
+  },
+  statsGrid: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "space-around", // Better spacing for compact
+  },
+  statItem: {
+    alignItems: "center",
+  },
+  statNumber: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  statCaption: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  classSelectorContainer: {
+    marginBottom: 20,
+  },
+  classSelectorContent: {
+    paddingHorizontal: 20,
+    gap: 12,
+  },
+  largeClassChip: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 30, // Pill shape
+  },
+  largeClassChipText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   scrollView: {
     flex: 1,
-    padding: 16,
   },
-  studentCard: {
-    borderRadius: 16,
+  scrollContent: {
+    paddingHorizontal: 20,
+  },
+  listHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  listHeaderTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  bigStudentCard: {
+    borderRadius: 20,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  bigAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  bigAvatarText: {
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  infoColumn: {
+    justifyContent: "center",
+  },
+  cardName: {
+    fontSize: 17, // Larger text
+    fontWeight: "700",
+  },
+  cardId: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  togglesContainer: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  pillToggle: {
+    height: 36,
+    minWidth: 36,
+    paddingHorizontal: 10,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pillText: {
+    fontSize: 13,
+  },
+  iconAction: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noteContainer: {
+    marginTop: 16,
+  },
+  noteInput: {
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    borderWidth: 1,
+  },
+  noteDisplay: {
+    marginTop: 12,
+    fontStyle: "italic",
+  },
+  statusBadgeBig: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  statusTextBig: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  floatingFooter: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
+    paddingBottom: 20, // Reduced safe area padding
+    borderTopWidth: 1,
+  },
+  bigSaveButton: {
+    height: 48, // Reduced from 56
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
-  studentHeader: {
+  bigSaveButtonText: {
+    color: "white",
+    fontSize: 16, // Reduced from 18
+    fontWeight: "bold",
+  },
+  bulkActionContainer: {
+    gap: 12,
+  },
+  bulkActionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 16,
+    alignItems: "center",
+    marginBottom: 4,
   },
-  studentName: {
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  studentNumber: {
+  bulkSelectionCount: {
     fontSize: 14,
-    marginTop: 4,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  statusText: {
-    fontSize: 12,
     fontWeight: "700",
   },
-  statusButtons: {
+  bulkButtonsRow: {
     flexDirection: "row",
     gap: 8,
-    marginBottom: 12,
   },
-  statusButton: {
+  bulkActionButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    borderWidth: 2,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
     alignItems: "center",
   },
-  statusButtonActive: {
-    borderColor: "transparent",
-  },
-  statusButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  statusButtonTextActive: {
+  bulkActionText: {
     color: "white",
+    fontWeight: "bold",
+    fontSize: 16,
   },
-  notesInput: {
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 14,
-    minHeight: 44,
-    borderWidth: 1,
-  },
-  notesText: {
-    fontSize: 14,
-    fontStyle: "italic",
-  },
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
-  },
-  saveButton: {
-    flexDirection: "row",
+  emptyContainer: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
-    borderRadius: 12,
-    gap: 8,
   },
-  saveButtonDisabled: {
-    opacity: 0.6,
+  emptyText: {
+    fontSize: 16,
+    marginTop: 10,
   },
-  saveButtonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
-  },
+  headerTopRow: { flexDirection: "row" }, // kept for safety if referenced else where but rewritten
 });
