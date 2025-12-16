@@ -202,7 +202,6 @@ export default function AbsenceRequestModal({
                 style={[
                   styles.studentOption,
                   {
-                    borderColor: colors.border,
                     backgroundColor:
                       selectedStudentId === student.student_id
                         ? colors.primary + "20"
