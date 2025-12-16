@@ -311,63 +311,6 @@ export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
     </View>
   );
 
-  const renderQuickActions = () => (
-    <View style={styles.quickActionsContainer}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>
-        Quick Actions
-      </Text>
-      <View style={styles.quickActionsGrid}>
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => onNavigate("attendance")}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
-            <Ionicons name="calendar" size={24} color="#007AFF" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Attendance
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => onNavigate("transport")}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#fff0e6" }]}>
-            <Ionicons name="bus" size={24} color="#FF9500" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Transport
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => onNavigate("assessment")}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e6fffa" }]}>
-            <Ionicons name="clipboard" size={24} color="#00C7BE" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Reports
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => onNavigate("billing" as any)}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#f0e6ff" }]}>
-            <Ionicons name="card" size={24} color="#AF52DE" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Pay Fees
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   if (loading) {
     return (
       <View
@@ -398,8 +341,6 @@ export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
       }
     >
       {renderHeader()}
-
-      {renderQuickActions()}
 
       <Text
         style={[styles.sectionTitle, { color: colors.text, marginTop: 20 }]}
@@ -478,38 +419,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  quickActionsContainer: {
-    marginBottom: 24,
-  },
-  quickActionsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  actionButton: {
-    width: "48%",
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 16,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  actionText: {
-    fontWeight: "600",
-    fontSize: 14,
-  },
+
   eventsSection: {
     marginBottom: 24,
   },

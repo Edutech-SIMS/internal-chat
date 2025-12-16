@@ -159,65 +159,6 @@ export default function AdminDashboard() {
     </View>
   );
 
-  const renderQuickActions = () => (
-    <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>
-        Quick Actions
-      </Text>
-      <View style={styles.quickActionsGrid}>
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => setShowAllUsersModal(true)}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e6f0ff" }]}>
-            <Ionicons name="people" size={24} color="#007AFF" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Manage Users
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => router.push("/groups")}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#fff0e6" }]}>
-            <Ionicons name="git-branch" size={24} color="#FF9500" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Manage Groups
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() => router.push("/settings")}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#f3e5f5" }]}>
-            <Ionicons name="settings" size={24} color="#9c27b0" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Settings
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.card }]}
-          onPress={() =>
-            Alert.alert("Coming Soon", "Reports module coming soon")
-          }
-        >
-          <View style={[styles.actionIcon, { backgroundColor: "#e0f2f1" }]}>
-            <Ionicons name="bar-chart" size={24} color="#009688" />
-          </View>
-          <Text style={[styles.actionText, { color: colors.text }]}>
-            Reports
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   const renderRecentActivity = () => (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -334,7 +275,6 @@ export default function AdminDashboard() {
       >
         {renderHeader()}
         {renderStats()}
-        {renderQuickActions()}
         {renderRecentActivity()}
       </ScrollView>
 
