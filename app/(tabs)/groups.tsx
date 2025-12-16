@@ -78,6 +78,7 @@ interface User {
   email: string | null;
   avatar_url?: string | null;
   user_roles?: { role: string }[];
+  children_classes?: string[]; // Classes of children if user is a parent
 }
 
 export default function GroupsScreen() {
@@ -413,7 +414,47 @@ export default function GroupsScreen() {
         profiles?.filter((user) => !existingMemberIds.includes(user.user_id)) ||
         [];
 
-      setAvailableUsers(available);
+      // Fetch children classes for these available users
+      const parentIds = available
+        .filter((u) => u.user_roles?.some((r) => r.role === "parent"))
+        .map((u) => u.user_id);
+
+      let usersWithClasses = available;
+
+      if (parentIds.length > 0) {
+        const { data: links } = await supabase
+          .from("parent_student_links")
+          .select(
+            `
+            parent_user_id,
+            students (
+              class_level
+            )
+          `
+          )
+          .in("parent_user_id", parentIds);
+
+        // Map parent_id -> Set of classes
+        const parentClassesMap = new Map<string, Set<string>>();
+        links?.forEach((link: any) => {
+          if (link.students?.class_level) {
+            const current =
+              parentClassesMap.get(link.parent_user_id) || new Set();
+            current.add(link.students.class_level);
+            parentClassesMap.set(link.parent_user_id, current);
+          }
+        });
+
+        // Update available users with class info
+        usersWithClasses = available.map((u) => ({
+          ...u,
+          children_classes: parentClassesMap.has(u.user_id)
+            ? Array.from(parentClassesMap.get(u.user_id)!)
+            : [],
+        }));
+      }
+
+      setAvailableUsers(usersWithClasses);
     } catch (error: any) {
       console.error("Error loading available users:", error);
       Alert.alert("Error", error.message || "Failed to load available users");
@@ -440,13 +481,48 @@ export default function GroupsScreen() {
       // Filter out the current user
       const otherUsers = profiles?.filter((p) => p.user_id !== user?.id) || [];
       console.log("Loaded all users:", otherUsers.length);
-      if (otherUsers.length > 0) {
-        console.log(
-          "First user sample:",
-          JSON.stringify(otherUsers[0], null, 2)
-        );
+
+      // Fetch children classes for these users
+      const parentIds = otherUsers
+        .filter((u) => u.user_roles?.some((r) => r.role === "parent"))
+        .map((u) => u.user_id);
+
+      let usersWithClasses = otherUsers;
+
+      if (parentIds.length > 0) {
+        const { data: links } = await supabase
+          .from("parent_student_links")
+          .select(
+            `
+            parent_user_id,
+            students (
+              class_level
+            )
+          `
+          )
+          .in("parent_user_id", parentIds);
+
+        // Map parent_id -> Set of classes
+        const parentClassesMap = new Map<string, Set<string>>();
+        links?.forEach((link: any) => {
+          if (link.students?.class_level) {
+            const current =
+              parentClassesMap.get(link.parent_user_id) || new Set();
+            current.add(link.students.class_level);
+            parentClassesMap.set(link.parent_user_id, current);
+          }
+        });
+
+        // Update all users with class info
+        usersWithClasses = otherUsers.map((u) => ({
+          ...u,
+          children_classes: parentClassesMap.has(u.user_id)
+            ? Array.from(parentClassesMap.get(u.user_id)!)
+            : [],
+        }));
       }
-      setAllUsers(otherUsers);
+
+      setAllUsers(usersWithClasses);
     } catch (error: any) {
       console.error("Error loading all users:", error);
     }
@@ -1035,29 +1111,59 @@ export default function GroupsScreen() {
     return matchesSearch;
   });
 
-  // Group users by role
+  // Group users by role and class
   const getGroupedUsers = () => {
     const groups: { title: string; data: User[] }[] = [
       { title: "Teachers", data: [] },
-      { title: "Parents", data: [] },
+      // Parents sections will be dynamically added
       { title: "Students", data: [] },
       { title: "Others", data: [] },
     ];
 
+    // Map to hold parent groups by class
+    const parentClassGroups = new Map<string, User[]>();
+    const genericParents: User[] = [];
+
     filteredUsers.forEach((user) => {
       const roles = user.user_roles?.map((r) => r.role) || [];
+
       if (roles.includes("teacher")) {
         groups[0].data.push(user);
       } else if (roles.includes("parent")) {
-        groups[1].data.push(user);
+        // Check for children classes
+        if (user.children_classes && user.children_classes.length > 0) {
+          user.children_classes.forEach((className) => {
+            const key = `Parents - ${className}`;
+            if (!parentClassGroups.has(key)) {
+              parentClassGroups.set(key, []);
+            }
+            parentClassGroups.get(key)?.push(user);
+          });
+        } else {
+          genericParents.push(user);
+        }
       } else if (roles.includes("student")) {
-        groups[2].data.push(user);
+        groups[1].data.push(user);
       } else {
-        groups[3].data.push(user);
+        groups[2].data.push(user);
       }
     });
 
-    return groups.filter((group) => group.data.length > 0);
+    // Sort class groups alphabetically
+    const sortedClassGroups = Array.from(parentClassGroups.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([title, data]) => ({ title, data }));
+
+    // Insert parent groups after Teachers
+    const finalGroups = [
+      groups[0], // Teachers
+      ...sortedClassGroups,
+      { title: "Parents (No Class Info)", data: genericParents },
+      groups[1], // Students
+      groups[2], // Others
+    ];
+
+    return finalGroups.filter((group) => group.data.length > 0);
   };
 
   const groupedUsers = getGroupedUsers();
@@ -1101,7 +1207,7 @@ export default function GroupsScreen() {
     return matchesSearch && matchesRole;
   });
 
-  // Group available users by role
+  // Group available users by role and class
   const getGroupedAvailableUsers = () => {
     // Filter available users first
     const filtered = availableUsers.filter((user) => {
@@ -1116,25 +1222,55 @@ export default function GroupsScreen() {
 
     const groups: { title: string; data: User[] }[] = [
       { title: "Teachers", data: [] },
-      { title: "Parents", data: [] },
+      // Parents sections will be dynamically added
       { title: "Students", data: [] },
       { title: "Others", data: [] },
     ];
 
+    // Map to hold parent groups by class
+    const parentClassGroups = new Map<string, User[]>();
+    const genericParents: User[] = [];
+
     filtered.forEach((user) => {
       const roles = user.user_roles?.map((r) => r.role) || [];
+
       if (roles.includes("teacher")) {
         groups[0].data.push(user);
       } else if (roles.includes("parent")) {
-        groups[1].data.push(user);
+        // Check for children classes
+        if (user.children_classes && user.children_classes.length > 0) {
+          user.children_classes.forEach((className) => {
+            const key = `Parents - ${className}`;
+            if (!parentClassGroups.has(key)) {
+              parentClassGroups.set(key, []);
+            }
+            parentClassGroups.get(key)?.push(user);
+          });
+        } else {
+          genericParents.push(user);
+        }
       } else if (roles.includes("student")) {
-        groups[2].data.push(user);
+        groups[1].data.push(user);
       } else {
-        groups[3].data.push(user);
+        groups[2].data.push(user);
       }
     });
 
-    return groups.filter((group) => group.data.length > 0);
+    // Sort class groups alphabetically
+    const sortedClassGroups = Array.from(parentClassGroups.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([title, data]) => ({ title, data }));
+
+    // Insert parent groups after Teachers
+    const finalGroups = [
+      groups[0], // Teachers
+      ...sortedClassGroups,
+      { title: "Parents (No Class Info)", data: genericParents },
+      groups[1], // Students
+      groups[2], // Others
+    ];
+
+    return finalGroups.filter((group) => group.data.length > 0);
   };
 
   const groupedAvailableUsers = getGroupedAvailableUsers();
