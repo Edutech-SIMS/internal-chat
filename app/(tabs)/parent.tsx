@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import {
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import ParentAssessmentHistory from "../../components/ParentAssessmentHistory";
 import ParentAttendance from "../../components/ParentAttendance";
 import ParentDashboard from "../../components/ParentDashboard";

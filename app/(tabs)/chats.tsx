@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { EventRegister } from "react-native-event-listeners";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";

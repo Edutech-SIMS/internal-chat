@@ -278,7 +278,6 @@ export default function AdminDashboard() {
         {renderRecentActivity()}
       </ScrollView>
 
-      {/* All Users Modal */}
       <Modal
         visible={showAllUsersModal}
         animationType="slide"

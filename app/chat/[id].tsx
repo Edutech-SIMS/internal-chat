@@ -3,6 +3,7 @@ import { decode } from "base64-arraybuffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { canSendMessages } from "lib/message-permissions";
 import React, {
   useCallback,
@@ -19,10 +20,8 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -31,6 +30,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -42,6 +42,7 @@ const { width } = Dimensions.get("window");
 
 interface Message {
   id: string;
+  user_id: string;
   content: string;
   created_at: string;
   attachment_url?: string;
@@ -118,8 +119,7 @@ const MessageItem = React.memo(
     isAnnouncementGroup: boolean;
     showAvatar: boolean;
   }) => {
-    const isMyMessage =
-      item.profiles?.full_name === user?.user_metadata?.full_name;
+    const isMyMessage = item.user_id === user?.id;
     const alignRight = !isAnnouncementGroup && isMyMessage;
     const isImage = item.attachment_type?.startsWith("image/");
 
@@ -197,7 +197,9 @@ const MessageItem = React.memo(
             <View style={styles.attachmentContainer}>
               {isImage ? (
                 <TouchableOpacity
-                  onPress={() => Linking.openURL(item.attachment_url!)}
+                  onPress={() => {
+                    (item as any).onImagePress?.(item.attachment_url!);
+                  }}
                 >
                   <Image
                     source={{ uri: item.attachment_url }}
@@ -214,7 +216,9 @@ const MessageItem = React.memo(
                     styles.fileAttachment,
                     { backgroundColor: "rgba(0,0,0,0.1)" },
                   ]}
-                  onPress={() => Linking.openURL(item.attachment_url!)}
+                  onPress={() =>
+                    WebBrowser.openBrowserAsync(item.attachment_url!)
+                  }
                 >
                   <View style={styles.fileIconContainer}>
                     <Ionicons
@@ -329,10 +333,13 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [readStatuses, setReadStatuses] = useState<{
     [userId: string]: string;
   }>({});
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerImage, setViewerImage] = useState<string | null>(null);
 
   // Hooks
   const { user, profile, schoolId } = useAuth();
@@ -385,17 +392,35 @@ export default function ChatScreen() {
 
   useEffect(() => {
     const initChat = async () => {
-      const group = await fetchGroupInfo();
-      await checkMessagePermissions(group);
-      fetchMessages(true);
-      setupRealtimeSubscription();
-      // Mark as read immediately on enter
-      markAsRead();
-      // Fetch initial read statuses
-      fetchReadStatuses();
+      setIsInitialLoading(true);
+      try {
+        const group = await fetchGroupInfo();
+        const permissionPromise = checkMessagePermissions(group);
+        const messagesPromise = fetchMessages(true);
+        const membersPromise = fetchGroupMembers();
+
+        await Promise.all([permissionPromise, messagesPromise, membersPromise]);
+
+        markAsRead();
+        fetchReadStatuses();
+      } finally {
+        setIsInitialLoading(false);
+      }
     };
     initChat();
   }, [chatId]);
+
+  // Handle real-time subscriptions separately for clean lifecycle
+  useEffect(() => {
+    if (!chatId || !profile?.user_id) return;
+
+    const channel = setupRealtimeSubscription();
+
+    return () => {
+      console.log(`Cleaning up real-time subscription for chat: ${chatId}`);
+      supabase.removeChannel(channel);
+    };
+  }, [chatId, profile?.user_id]);
 
   // Mark as read when messages update
   useEffect(() => {
@@ -406,9 +431,13 @@ export default function ChatScreen() {
 
   // Logic
   const setupRealtimeSubscription = () => {
-    // 1. Typing indicators
-    const typingSubscription = supabase
-      .channel("typing-events")
+    console.log(`[Realtime] Initializing channel for chatId: ${chatId}`);
+
+    // Create a single unique channel for this chat room
+    const channel = supabase.channel(`chat:${chatId}`);
+
+    channel
+      // 1. Typing indicators
       .on(
         "postgres_changes",
         {
@@ -417,27 +446,40 @@ export default function ChatScreen() {
           table: "typing_indicators",
           filter: `group_id=eq.${chatId}`,
         },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
+        (payload: any) => {
+          const userId = payload.new?.user_id || payload.old?.user_id;
+          console.log("[Realtime] Typing Event:", payload.eventType, userId);
+
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
             const newTypingUser = payload.new.user_id;
+            // Only care about other users
             if (newTypingUser !== profile?.user_id) {
-              setTypingUsers((prev) => new Set(prev).add(newTypingUser));
+              if (payload.new.is_typing) {
+                setTypingUsers((prev) => new Set(prev).add(newTypingUser));
+              } else {
+                setTypingUsers((prev) => {
+                  const newSet = new Set(prev);
+                  newSet.delete(newTypingUser);
+                  return newSet;
+                });
+              }
             }
           } else if (payload.eventType === "DELETE") {
-            const stoppedTypingUser = payload.old.user_id;
-            setTypingUsers((prev) => {
-              const newSet = new Set(prev);
-              newSet.delete(stoppedTypingUser);
-              return newSet;
-            });
+            const stoppedTypingUser = payload.old?.user_id;
+            if (stoppedTypingUser) {
+              setTypingUsers((prev) => {
+                const newSet = new Set(prev);
+                newSet.delete(stoppedTypingUser);
+                return newSet;
+              });
+            }
           }
         }
       )
-      .subscribe();
-
-    // 2. Read receipts (group_reads)
-    const readReceiptsSubscription = supabase
-      .channel("read-receipts")
+      // 2. Read receipts (group_reads)
       .on(
         "postgres_changes",
         {
@@ -446,17 +488,95 @@ export default function ChatScreen() {
           table: "group_reads",
           filter: `group_id=eq.${chatId}`,
         },
-        () => {
-          // When any read status changes, re-fetch all to be safe and simple
+        (payload: any) => {
+          console.log("[Realtime] Read Receipt Event:", payload.eventType);
+          // Re-fetch all read statuses to keep UI in sync
           fetchReadStatuses();
         }
       )
-      .subscribe();
+      // 3. New messages
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `group_id=eq.${chatId}`,
+        },
+        async (payload: any) => {
+          console.log("[Realtime] New Message INSERT:", payload.new.id);
 
-    return () => {
-      typingSubscription.unsubscribe();
-      readReceiptsSubscription.unsubscribe();
-    };
+          // Avoid duplicate messages (e.g. if we sent it from this device)
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === payload.new.id)) {
+              console.log(
+                "[Realtime] Duplicate message, skipping:",
+                payload.new.id
+              );
+              return prev;
+            }
+
+            // Construct a safe temporary message
+            // Use payload content if available, otherwise "..."
+            const tempMessage: Message = {
+              id: payload.new.id,
+              user_id: payload.new.user_id,
+              content: payload.new.content || "...",
+              created_at: payload.new.created_at || new Date().toISOString(),
+              attachment_url: payload.new.attachment_url,
+              attachment_type: payload.new.attachment_type,
+              attachment_name: payload.new.attachment_name,
+              profiles: { full_name: "...", email: "" },
+            };
+
+            // Re-fetch the full message details (with profiles join)
+            fetchSingleMessage(payload.new.id);
+
+            return [...prev, tempMessage];
+          });
+
+          // Mark as read immediately when a new message arrives while we're in the chat
+          markAsRead();
+        }
+      )
+      .subscribe((status, err) => {
+        console.log(`[Realtime] Channel Status [${chatId}]:`, status);
+        if (err) {
+          console.error(`[Realtime] Subscription Error [${chatId}]:`, err);
+        }
+        if (status === "CHANNEL_ERROR") {
+          console.warn("[Realtime] Channel error. Check RLS and Replication.");
+        }
+      });
+
+    return channel;
+  };
+
+  const fetchSingleMessage = async (messageId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
+        )
+        .eq("id", messageId)
+        .single();
+
+      if (!error && data) {
+        const formattedMessage = {
+          ...data,
+          profiles: Array.isArray(data.profiles)
+            ? data.profiles[0]
+            : data.profiles,
+        };
+
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? formattedMessage : m))
+        );
+      }
+    } catch (err) {
+      console.error("Error fetching single message details:", err);
+    }
   };
 
   const handleTyping = async (isTyping: boolean) => {
@@ -464,21 +584,29 @@ export default function ChatScreen() {
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     if (isTyping) {
-      await supabase.from("typing_indicators").upsert({
-        user_id: profile?.user_id,
-        group_id: chatId,
-        is_typing: true,
-        updated_at: new Date().toISOString(),
-      });
+      const { error } = await supabase.from("typing_indicators").upsert(
+        {
+          user_id: profile?.user_id,
+          group_id: chatId,
+          is_typing: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,group_id" }
+      );
+
+      if (error) console.error("Error setting typing indicator:", error);
 
       typingTimeoutRef.current = setTimeout(() => {
         handleTyping(false);
       }, 3000);
     } else {
-      await supabase
+      const { error } = await supabase
         .from("typing_indicators")
         .delete()
-        .eq("user_id", profile?.user_id);
+        .eq("user_id", profile?.user_id)
+        .eq("group_id", chatId);
+
+      if (error) console.error("Error clearing typing indicator:", error);
     }
   };
 
@@ -520,7 +648,6 @@ export default function ChatScreen() {
   const checkMessagePermissions = async (groupData?: any) => {
     if (!user || !profile?.user_id) return;
 
-    setCheckingPermission(true);
     try {
       const hasPermission = await canSendMessages(chatId, profile.user_id);
       setCanSend(hasPermission);
@@ -538,8 +665,6 @@ export default function ChatScreen() {
     } catch (error) {
       console.error("Error checking permissions:", error);
       setCanSend(false);
-    } finally {
-      setCheckingPermission(false);
     }
   };
 
@@ -594,7 +719,7 @@ export default function ChatScreen() {
       let query = supabase
         .from("messages")
         .select(
-          `id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
         )
         .eq("group_id", chatId)
         .eq("school_id", schoolId)
@@ -628,7 +753,13 @@ export default function ChatScreen() {
             100
           );
         } else {
-          setMessages((prev) => [...newMessages, ...prev]);
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id));
+            const filteredNew = newMessages.filter(
+              (m) => !existingIds.has(m.id)
+            );
+            return [...filteredNew, ...prev];
+          });
         }
       }
     } finally {
@@ -746,7 +877,10 @@ export default function ChatScreen() {
         : newMessageData.profiles,
     };
 
-    setMessages((prev) => [...prev, formattedMessage]);
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === formattedMessage.id)) return prev;
+      return [...prev, formattedMessage];
+    });
     setNewMessage("");
     setSelectedFile(null);
     setSending(false);
@@ -805,6 +939,10 @@ export default function ChatScreen() {
                 totalMembers: otherMembersCount,
                 isReadByAll,
               },
+              onImagePress: (url: string) => {
+                setViewerImage(url);
+                setViewerVisible(true);
+              },
             } as any
           }
           user={user}
@@ -825,7 +963,7 @@ export default function ChatScreen() {
     ]
   );
 
-  if (checkingPermission) {
+  if (isInitialLoading) {
     return (
       <SafeAreaView
         style={[styles.safeArea, { backgroundColor: colors.background }]}
@@ -930,7 +1068,11 @@ export default function ChatScreen() {
             { opacity: fadeAnim, backgroundColor: colors.background },
           ]}
         >
-          {messages.length === 0 ? (
+          {isInitialLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : messages.length === 0 ? (
             <View style={styles.emptyContainer}>
               <View
                 style={[
@@ -1378,6 +1520,30 @@ export default function ChatScreen() {
             )}
           </View>
         </Modal>
+
+        {/* Image Viewer Modal */}
+        <Modal
+          visible={viewerVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setViewerVisible(false)}
+        >
+          <View style={styles.viewerContainer}>
+            <TouchableOpacity
+              style={styles.viewerCloseButton}
+              onPress={() => setViewerVisible(false)}
+            >
+              <Ionicons name="close" size={30} color="#FFF" />
+            </TouchableOpacity>
+            {viewerImage && (
+              <Image
+                source={{ uri: viewerImage }}
+                style={styles.viewerImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1794,5 +1960,23 @@ const styles = StyleSheet.create({
   modalLoadingText: {
     marginTop: 10,
     fontSize: 14,
+  },
+  viewerContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  viewerImage: {
+    width: width,
+    height: width, // Or adjust to fit better
+    flex: 1,
+  },
+  viewerCloseButton: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 50 : 30,
+    right: 20,
+    zIndex: 10,
+    padding: 10,
   },
 });

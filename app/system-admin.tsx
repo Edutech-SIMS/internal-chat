@@ -3,18 +3,18 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    RefreshControl,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 
@@ -289,7 +289,8 @@ export default function SystemAdminPage() {
       // Optimized: Fetch schools with nested profiles and roles in a single query
       const { data: schoolsData, error } = await supabase
         .from("schools")
-        .select(`
+        .select(
+          `
           id,
           name,
           profiles (
@@ -299,7 +300,8 @@ export default function SystemAdminPage() {
               role
             )
           )
-        `)
+        `
+        )
         .order("name");
 
       if (error) throw error;
