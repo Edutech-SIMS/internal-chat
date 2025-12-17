@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -238,7 +239,40 @@ export default function TeacherScreen() {
   );
 
   const renderClassSelector = () => {
-    if (classAssignments.length <= 1) return null;
+    if (classAssignments.length === 0) return null;
+
+    if (classAssignments.length === 1) {
+      return (
+        <View style={styles.section}>
+          <View
+            style={[
+              styles.singleClassCard,
+              {
+                backgroundColor: colors.primary + "10",
+                borderColor: colors.primary + "30",
+              },
+            ]}
+          >
+            <View style={styles.singleClassIcon}>
+              <Ionicons name="people" size={24} color={colors.primary} />
+            </View>
+            <View>
+              <Text style={[styles.singleClassTitle, { color: colors.text }]}>
+                {classAssignments[0].name}
+              </Text>
+              <Text
+                style={[
+                  styles.singleClassSubtitle,
+                  { color: colors.placeholderText },
+                ]}
+              >
+                {classAssignments[0].students.length} Students Enrolled
+              </Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
 
     return (
       <View style={styles.section}>
@@ -387,11 +421,9 @@ export default function TeacherScreen() {
               style={[styles.studentAvatar, { backgroundColor: colors.border }]}
             >
               {student.profile_picture_url ? (
-                // Use Image component here if URL exists
-                <Ionicons
-                  name="person"
-                  size={20}
-                  color={colors.placeholderText}
+                <Image
+                  source={{ uri: student.profile_picture_url }}
+                  style={{ width: 40, height: 40, borderRadius: 20 }}
                 />
               ) : (
                 <Text style={[styles.avatarText, { color: colors.text }]}>
@@ -482,7 +514,12 @@ const styles = StyleSheet.create({
   },
   className: {
     fontSize: 14,
-    marginTop: 2,
+    marginLeft: 6,
+  },
+  classIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
   },
   profileButton: {
     width: 48,
@@ -566,6 +603,35 @@ const styles = StyleSheet.create({
   },
   classCardSubtitle: {
     fontSize: 12,
+  },
+  singleClassCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 16,
+  },
+  singleClassIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "white",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  singleClassTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 2,
+  },
+  singleClassSubtitle: {
+    fontSize: 13,
   },
 
   studentItem: {

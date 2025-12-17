@@ -3,7 +3,6 @@ import { decode } from "base64-arraybuffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
 import { canSendMessages } from "lib/message-permissions";
 import React, {
   useCallback,
@@ -30,7 +29,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { WebView } from "react-native-webview";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -112,12 +115,14 @@ const MessageItem = React.memo(
     colors,
     isAnnouncementGroup,
     showAvatar,
+    onDocPress,
   }: {
     item: Message;
     user: any;
     colors: any;
     isAnnouncementGroup: boolean;
     showAvatar: boolean;
+    onDocPress: (url: string, name: string) => void;
   }) => {
     const isMyMessage = item.user_id === user?.id;
     const alignRight = !isAnnouncementGroup && isMyMessage;
@@ -217,7 +222,10 @@ const MessageItem = React.memo(
                     { backgroundColor: "rgba(0,0,0,0.1)" },
                   ]}
                   onPress={() =>
-                    WebBrowser.openBrowserAsync(item.attachment_url!)
+                    onDocPress(
+                      item.attachment_url!,
+                      item.attachment_name || "Attachment"
+                    )
                   }
                 >
                   <View style={styles.fileIconContainer}>
@@ -338,11 +346,14 @@ export default function ChatScreen() {
   const [readStatuses, setReadStatuses] = useState<{
     [userId: string]: string;
   }>({});
-  const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
-
+  const [docViewerVisible, setDocViewerVisible] = useState(false);
+  const [docViewerUrl, setDocViewerUrl] = useState<string | null>(null);
+  const [docViewerName, setDocViewerName] = useState<string | null>(null);
+  const [viewerVisible, setViewerVisible] = useState(false);
   // Hooks
   const { user, profile, schoolId } = useAuth();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const router = useRouter();
 
@@ -949,6 +960,11 @@ export default function ChatScreen() {
           colors={colors}
           isAnnouncementGroup={isAnnouncementGroup}
           showAvatar={isLastFromUser}
+          onDocPress={(url, name) => {
+            setDocViewerUrl(url);
+            setDocViewerName(name);
+            setDocViewerVisible(true);
+          }}
         />
       );
     },
@@ -960,6 +976,11 @@ export default function ChatScreen() {
       readStatuses,
       groupMembers,
       profile,
+      setViewerImage,
+      setViewerVisible,
+      setDocViewerUrl,
+      setDocViewerName,
+      setDocViewerVisible,
     ]
   );
 
@@ -1544,6 +1565,54 @@ export default function ChatScreen() {
             )}
           </View>
         </Modal>
+
+        {/* Document Viewer Modal */}
+        <Modal
+          visible={docViewerVisible}
+          transparent={false}
+          animationType="slide"
+          onRequestClose={() => setDocViewerVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            <View
+              style={[
+                styles.docHeader,
+                {
+                  borderBottomColor: colors.border,
+                  paddingTop: insets.top,
+                  height: 56 + insets.top,
+                },
+              ]}
+            >
+              <TouchableOpacity
+                onPress={() => setDocViewerVisible(false)}
+                style={styles.docCloseButton}
+              >
+                <Ionicons name="close" size={28} color={colors.text} />
+              </TouchableOpacity>
+              <Text
+                style={[styles.docTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {docViewerName}
+              </Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <WebView
+              source={{ uri: docViewerUrl || "" }}
+              style={{ flex: 1 }}
+              startInLoadingState={true}
+              renderLoading={() => (
+                <ActivityIndicator
+                  style={styles.docLoading}
+                  size="large"
+                  color={colors.primary}
+                />
+              )}
+            />
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1978,5 +2047,36 @@ const styles = StyleSheet.create({
     right: 20,
     zIndex: 10,
     padding: 10,
+  },
+  docHeader: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+  },
+  docCloseButton: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  docTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "600",
+    textAlign: "center",
+    marginHorizontal: 10,
+  },
+  docLoading: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "transparent",
   },
 });

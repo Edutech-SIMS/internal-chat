@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useEffect } from "react";
 import { EventRegister } from "react-native-event-listeners";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { getThemeColors } from "../../themes";
@@ -23,12 +24,14 @@ export default function TabLayout() {
       ? hasRole("admin") || hasRole("superadmin")
       : false;
 
+  const insets = useSafeAreaInsets();
+
   const tabBarStyle = {
     backgroundColor: colors.card,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    paddingBottom: 20,
-    height: 70,
+    paddingBottom: insets.bottom > 0 ? insets.bottom : 20,
+    height: 60 + (insets.bottom > 0 ? insets.bottom : 20),
   };
 
   // Don't render tabs while loading auth state

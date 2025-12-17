@@ -3,7 +3,10 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
+  Modal,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -31,6 +34,9 @@ export default function ChatsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [previewingChat, setPreviewingChat] = useState<Chat | null>(null);
+  const [previewMessages, setPreviewMessages] = useState<any[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const router = useRouter();
   const { user, profile } = useAuth();
   const { isDarkMode } = useTheme();
@@ -51,102 +57,151 @@ export default function ChatsScreen() {
     };
   }, []);
 
+  // Handle real-time updates
+  useEffect(() => {
+    if (!user?.id || !profile?.school_id || chats.length === 0) return;
+
+    console.log("[Chats] Setting up global real-time subscription");
+
+    // Subscribe to messages in any group the user is a member of
+    const groupIds = chats.map((c) => c.id);
+    const channel = supabase.channel("global-chats");
+
+    channel
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `school_id=eq.${profile.school_id}`,
+        },
+        (payload: any) => {
+          if (groupIds.includes(payload.new.group_id)) {
+            console.log(
+              "[Chats] New message received for group:",
+              payload.new.group_id
+            );
+            // Refresh counts and previews
+            // We could update state manually for speed, but fetchChats is safer to ensure consistency
+            fetchChats(true);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "group_reads",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          console.log("[Chats] Read status updated for user");
+          fetchChats(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, profile?.school_id, chats.length > 0]);
+
   // Run quietly whenever tab/screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      fetchChats();
+      fetchChats(true);
     }, [user?.id])
   );
 
   const fetchChats = async (isRefreshing = false) => {
     if (!user?.id || !profile?.school_id) return;
 
-    if (!isRefreshing) setLoading(true);
+    if (!isRefreshing && chats.length === 0) setLoading(true);
 
     try {
-      // Get all groups for this user in their school (server-side filter)
+      // 1. Get all groups for this user
       const { data: userGroups, error: groupError } = await supabase
         .from("group_members")
         .select(
           `
-        group_id,
-        groups!inner (
-          id,
-          name,
-          is_announcement,
-          created_at,
-          school_id,
-          description
-        )
-      `
+          group_id,
+          groups!inner (
+            id,
+            name,
+            is_announcement,
+            created_at,
+            school_id
+          )
+        `
         )
         .eq("user_id", user.id)
-        .eq("groups.school_id", profile.school_id)
-        .order("joined_at", { ascending: false });
+        .eq("groups.school_id", profile.school_id);
 
       if (groupError) throw groupError;
-
       if (!userGroups || userGroups.length === 0) {
         setChats([]);
-        setLoading(false);
         return;
       }
 
-      // Fetch latest message for each group individually (N+1 pattern but limited to 1 row per group)
-      // This is much more scalable than fetching ALL messages for ALL groups
-      const chatsWithMessages = await Promise.all(
-        userGroups.map(async (userGroup: any) => {
-          const group = userGroup.groups;
+      const groupIds = userGroups.map((g) => g.group_id);
 
-          const { data: latestMessages, error: messageError } = await supabase
+      // 2. Fetch last read timestamps for these groups
+      const { data: readStatuses } = await supabase
+        .from("group_reads")
+        .select("group_id, last_read_at")
+        .eq("user_id", user.id)
+        .in("group_id", groupIds);
+
+      const readMap = new Map(
+        readStatuses?.map((r) => [r.group_id, r.last_read_at])
+      );
+
+      // 3. Fetch latest message AND unread count for each group
+      const chatsWithData = await Promise.all(
+        userGroups.map(async (ug: any) => {
+          const group = ug.groups;
+          const lastRead = readMap.get(group.id) || group.created_at;
+
+          // Latest message
+          const { data: latestMsg } = await supabase
             .from("messages")
-            .select(`id, content, created_at`)
+            .select("content, created_at")
             .eq("group_id", group.id)
             .order("created_at", { ascending: false })
-            .limit(1);
+            .limit(1)
+            .single();
 
-          if (messageError) {
-            console.error(
-              `Error fetching latest message for group ${group.id}:`,
-              messageError
-            );
-            return {
-              id: group.id,
-              name: group.name || "Untitled Group",
-              last_message: "Error loading message",
-              last_message_time: group.created_at,
-              unread_count: 0,
-              is_group: true,
-              is_announcement: group.is_announcement,
-            };
-          }
-
-          const latestMessage = latestMessages?.[0];
+          // Unread count
+          const { count: unreadCount } = await supabase
+            .from("messages")
+            .select("*", { count: "exact", head: true })
+            .eq("group_id", group.id)
+            .gt("created_at", lastRead);
 
           return {
             id: group.id,
             name: group.name || "Untitled Group",
-            last_message: latestMessage?.content || "No messages yet",
-            last_message_time: latestMessage?.created_at || group.created_at,
-            unread_count: 0,
+            last_message: latestMsg?.content || "No messages yet",
+            last_message_time: latestMsg?.created_at || group.created_at,
+            unread_count: unreadCount || 0,
             is_group: true,
             is_announcement: group.is_announcement,
           };
         })
       );
 
-      // Sort chats by last message time
-      const sortedChats = chatsWithMessages.sort((a, b) => {
-        return (
+      // Sort by last message time
+      const sorted = chatsWithData.sort(
+        (a, b) =>
           new Date(b.last_message_time).getTime() -
           new Date(a.last_message_time).getTime()
-        );
-      });
+      );
 
-      setChats(sortedChats);
+      setChats(sorted);
     } catch (error) {
-      console.error("Error fetching chats:", error);
-      setChats([]);
+      console.error("[Chats] Error fetching chats:", error);
     } finally {
       setLoading(false);
     }
@@ -162,6 +217,34 @@ export default function ChatsScreen() {
     router.push(
       `/chat/${chatId}?name=${encodeURIComponent(chatName || "Chat")}`
     );
+  };
+
+  const handleLongPress = async (chat: Chat) => {
+    setPreviewingChat(chat);
+    setPreviewLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(
+          `
+          id,
+          content,
+          created_at,
+          profiles (full_name)
+        `
+        )
+        .eq("group_id", chat.id)
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (!error && data) {
+        setPreviewMessages(data.reverse());
+      }
+    } catch (err) {
+      console.error("[Chats] Error fetching preview messages:", err);
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const filteredChats = chats.filter(
@@ -248,6 +331,8 @@ export default function ChatsScreen() {
               <TouchableOpacity
                 style={[styles.chatItem, isDarkMode && styles.darkChatItem]}
                 onPress={() => navigateToChat(item.id, item.name)}
+                onLongPress={() => handleLongPress(item)}
+                delayLongPress={500}
                 activeOpacity={0.7}
               >
                 <View
@@ -316,6 +401,201 @@ export default function ChatsScreen() {
           />
         )}
       </View>
+
+      {/* Long Press Preview Modal */}
+      <Modal
+        visible={!!previewingChat}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setPreviewingChat(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setPreviewingChat(null)}
+        >
+          <View
+            style={[
+              styles.previewContainer,
+              isDarkMode && styles.darkPreviewContainer,
+            ]}
+          >
+            <View
+              style={[
+                styles.previewHeader,
+                isDarkMode && styles.darkPreviewHeader,
+              ]}
+            >
+              <View style={styles.previewHeaderTop}>
+                <View
+                  style={[
+                    styles.previewAvatar,
+                    previewingChat?.is_announcement &&
+                      styles.announcementAvatar,
+                  ]}
+                >
+                  <Ionicons
+                    name={previewingChat?.is_group ? "people" : "person"}
+                    size={20}
+                    color="#fff"
+                  />
+                </View>
+                <View style={styles.previewTitleContainer}>
+                  <Text
+                    style={[styles.previewTitle, isDarkMode && styles.darkText]}
+                  >
+                    {previewingChat?.name}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.previewSubtitle,
+                      isDarkMode && styles.darkPreviewSubtitle,
+                    ]}
+                  >
+                    Recent Activity
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {previewLoading ? (
+              <View
+                style={[
+                  styles.previewLoadingContainer,
+                  isDarkMode && styles.darkPreviewScroll,
+                ]}
+              >
+                <ActivityIndicator
+                  size="large"
+                  color={isDarkMode ? "#4dabf5" : "#007AFF"}
+                />
+              </View>
+            ) : (
+              <ScrollView
+                style={[
+                  styles.previewScroll,
+                  isDarkMode && styles.darkPreviewScroll,
+                ]}
+                contentContainerStyle={styles.previewScrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {previewMessages.length === 0 ? (
+                  <View style={styles.noMessagesContainer}>
+                    <Ionicons
+                      name="chatbubbles-outline"
+                      size={48}
+                      color={isDarkMode ? "#555" : "#ccc"}
+                    />
+                    <Text
+                      style={[
+                        styles.noMessagesText,
+                        isDarkMode && styles.darkPreviewSubtitle,
+                      ]}
+                    >
+                      No recent messages
+                    </Text>
+                  </View>
+                ) : (
+                  previewMessages.map((msg) => {
+                    const isMe = msg.user_id === user?.id;
+                    return (
+                      <View
+                        key={msg.id}
+                        style={[
+                          styles.previewBubbleWrapper,
+                          isMe ? styles.bubbleRight : styles.bubbleLeft,
+                        ]}
+                      >
+                        {!isMe && (
+                          <Text
+                            style={[
+                              styles.bubbleSender,
+                              isDarkMode && styles.darkBubbleSender,
+                            ]}
+                          >
+                            {msg.profiles?.full_name?.split(" ")[0] || "User"}
+                          </Text>
+                        )}
+                        <View
+                          style={[
+                            styles.previewBubble,
+                            isMe ? styles.myBubble : styles.theirBubble,
+                            isDarkMode && isMe && styles.darkMyBubble,
+                            isDarkMode && !isMe && styles.darkTheirBubble,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.previewContent,
+                              isMe
+                                ? styles.myBubbleText
+                                : isDarkMode
+                                ? styles.darkText
+                                : styles.theirBubbleText,
+                            ]}
+                          >
+                            {msg.content}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.previewTime,
+                              isMe ? styles.myTimeText : styles.theirTimeText,
+                            ]}
+                          >
+                            {new Date(msg.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            )}
+
+            <View
+              style={[
+                styles.previewActions,
+                isDarkMode && styles.darkPreviewActions,
+              ]}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.previewButton,
+                  styles.previewCloseButton,
+                  isDarkMode && styles.darkPreviewCloseButton,
+                ]}
+                onPress={() => setPreviewingChat(null)}
+              >
+                <Text
+                  style={[
+                    styles.previewButtonText,
+                    isDarkMode && styles.darkText,
+                  ]}
+                >
+                  Dismiss
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.previewButton, styles.previewOpenButton]}
+                onPress={() => {
+                  const id = previewingChat?.id;
+                  const name = previewingChat?.name;
+                  setPreviewingChat(null);
+                  if (id) navigateToChat(id, name!);
+                }}
+              >
+                <Text style={[styles.previewButtonText, styles.openButtonText]}>
+                  Open Chat
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -514,6 +794,189 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   darkSearchInput: {
+    color: "#fff",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  previewContainer: {
+    width: "90%",
+    maxHeight: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 24,
+    padding: 0,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 15 },
+    shadowOpacity: 0.4,
+    shadowRadius: 25,
+    elevation: 20,
+  },
+  darkPreviewContainer: {
+    backgroundColor: "#1e1e1e",
+  },
+  previewHeader: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+    backgroundColor: "#fff",
+  },
+  darkPreviewHeader: {
+    backgroundColor: "#1e1e1e",
+    borderBottomColor: "#333",
+  },
+  previewHeaderTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  previewAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#007AFF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  previewTitleContainer: {
+    flex: 1,
+  },
+  previewTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  previewSubtitle: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  darkPreviewSubtitle: {
+    color: "#888",
+  },
+  previewLoadingContainer: {
+    padding: 40,
+    alignItems: "center",
+  },
+  previewScroll: {
+    flexGrow: 0,
+    backgroundColor: "#f8f9fa",
+  },
+  darkPreviewScroll: {
+    backgroundColor: "#161618",
+  },
+  previewScrollContent: {
+    padding: 15,
+  },
+  previewBubbleWrapper: {
+    marginBottom: 10,
+    maxWidth: "85%",
+  },
+  bubbleLeft: {
+    alignSelf: "flex-start",
+  },
+  bubbleRight: {
+    alignSelf: "flex-end",
+  },
+  bubbleSender: {
+    fontSize: 10,
+    color: "#888",
+    marginBottom: 2,
+    marginLeft: 12,
+  },
+  darkBubbleSender: {
+    color: "#aaa",
+  },
+  previewBubble: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 18,
+  },
+  myBubble: {
+    backgroundColor: "#007AFF",
+    borderBottomRightRadius: 4,
+  },
+  theirBubble: {
+    backgroundColor: "#fff",
+    borderBottomLeftRadius: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  darkMyBubble: {
+    backgroundColor: "#0056b3",
+  },
+  darkTheirBubble: {
+    backgroundColor: "#2c2c2e",
+  },
+  previewContent: {
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  myBubbleText: {
+    color: "#fff",
+  },
+  theirBubbleText: {
+    color: "#333",
+  },
+  previewTime: {
+    fontSize: 9,
+    marginTop: 4,
+    textAlign: "right",
+  },
+  myTimeText: {
+    color: "rgba(255,255,255,0.7)",
+  },
+  theirTimeText: {
+    color: "#999",
+  },
+  noMessagesContainer: {
+    alignItems: "center",
+    padding: 40,
+  },
+  noMessagesText: {
+    marginTop: 10,
+    color: "#999",
+  },
+  previewActions: {
+    flexDirection: "row",
+    padding: 15,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+    gap: 12,
+  },
+  darkPreviewActions: {
+    backgroundColor: "#1e1e1e",
+    borderTopColor: "#333",
+  },
+  previewButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewCloseButton: {
+    backgroundColor: "#f2f2f7",
+  },
+  darkPreviewCloseButton: {
+    backgroundColor: "#2c2c2e",
+  },
+  previewOpenButton: {
+    backgroundColor: "#007AFF",
+  },
+  previewButtonText: {
+    fontWeight: "600",
+    fontSize: 15,
+  },
+  openButtonText: {
     color: "#fff",
   },
 });

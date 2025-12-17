@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -22,6 +23,9 @@ interface StudentAttendance {
   student_id: string;
   student_name: string;
   student_number: string;
+  first_name: string;
+  last_name: string;
+  profile_picture_url?: string;
   status: "present" | "absent" | "late" | "excused";
   notes?: string;
   is_marked?: boolean;
@@ -136,6 +140,7 @@ export default function AttendanceScreen() {
             id,
             first_name,
             last_name,
+            profile_picture_url,
             student_id
           )
         `
@@ -175,6 +180,9 @@ export default function AttendanceScreen() {
         return {
           student_id: student.id,
           student_name: `${student.first_name} ${student.last_name}`,
+          first_name: student.first_name,
+          last_name: student.last_name,
+          profile_picture_url: student.profile_picture_url,
           student_number: student.student_id,
           status: record?.status || "present",
           is_marked: !!record,
@@ -283,7 +291,8 @@ export default function AttendanceScreen() {
             id,
             student_id,
             first_name,
-            last_name
+            last_name,
+            profile_picture_url
           )
         `
         )
@@ -319,6 +328,9 @@ export default function AttendanceScreen() {
           return {
             student_id: student.id,
             student_name: `${student.first_name} ${student.last_name}`,
+            first_name: student.first_name,
+            last_name: student.last_name,
+            profile_picture_url: student.profile_picture_url,
             student_number: student.student_id,
             status: existingRecord?.status || "present",
             is_marked: !!existingRecord,
@@ -665,11 +677,19 @@ export default function AttendanceScreen() {
                         { backgroundColor: colors.border },
                       ]}
                     >
-                      <Text
-                        style={[styles.bigAvatarText, { color: colors.text }]}
-                      >
-                        {student.student_name.charAt(0)}
-                      </Text>
+                      {student.profile_picture_url ? (
+                        <Image
+                          source={{ uri: student.profile_picture_url }}
+                          style={{ width: 40, height: 40, borderRadius: 20 }}
+                        />
+                      ) : (
+                        <Text
+                          style={[styles.avatarText, { color: colors.text }]}
+                        >
+                          {student.first_name[0]}
+                          {student.last_name[0]}
+                        </Text>
+                      )}
                     </View>
                     <View style={styles.infoColumn}>
                       <Text style={[styles.cardName, { color: colors.text }]}>
@@ -1147,6 +1167,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: "bold",
   },
   bigSaveButtonText: {
     color: "white",
