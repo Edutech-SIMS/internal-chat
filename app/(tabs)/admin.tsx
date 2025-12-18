@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -12,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { StatCard } from "../../components/StatCard";
 import { ThemedText as Text } from "../../components/ThemedText";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -132,44 +132,24 @@ export default function AdminScreen() {
 
   const renderStats = () => (
     <View style={styles.statsContainer}>
-      <LinearGradient
+      <StatCard
+        label="Total Users"
+        value={stats.total}
+        icon="people"
         colors={["#4F46E5", "#3730A3"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.statCard}
-      >
-        <View style={styles.statIconBadge}>
-          <Ionicons name="people" size={20} color="#FFFFFF" />
-        </View>
-        <Text style={styles.statValueLight}>{stats.total}</Text>
-        <Text style={styles.statLabelLight}>Total Users</Text>
-      </LinearGradient>
-
-      <LinearGradient
+      />
+      <StatCard
+        label="Teachers"
+        value={stats.teachers}
+        icon="school"
         colors={["#10B981", "#059669"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.statCard}
-      >
-        <View style={styles.statIconBadge}>
-          <Ionicons name="school" size={20} color="#FFFFFF" />
-        </View>
-        <Text style={styles.statValueLight}>{stats.teachers}</Text>
-        <Text style={styles.statLabelLight}>Teachers</Text>
-      </LinearGradient>
-
-      <LinearGradient
+      />
+      <StatCard
+        label="Parents"
+        value={stats.parents}
+        icon="home"
         colors={["#F59E0B", "#D97706"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.statCard}
-      >
-        <View style={styles.statIconBadge}>
-          <Ionicons name="home" size={20} color="#FFFFFF" />
-        </View>
-        <Text style={styles.statValueLight}>{stats.parents}</Text>
-        <Text style={styles.statLabelLight}>Parents</Text>
-      </LinearGradient>
+      />
     </View>
   );
 
@@ -368,34 +348,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 32,
     gap: 10,
-  },
-  statCard: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 24,
-    alignItems: "flex-start",
-  },
-  statIconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  statValueLight: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#FFFFFF",
-  },
-  statLabelLight: {
-    fontSize: 11,
-    color: "rgba(255, 255, 255, 0.8)",
-    marginTop: 4,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   section: {
     marginBottom: 20,

@@ -27,7 +27,7 @@ interface StudentAttendance {
   first_name: string;
   last_name: string;
   profile_picture_url?: string;
-  status: "present" | "absent" | "late" | "excused";
+  status: "present" | "absent" | "late" | "excused" | null;
   notes?: string;
   is_marked?: boolean;
 }
@@ -191,7 +191,7 @@ export default function AttendanceScreen() {
           last_name: student.last_name,
           profile_picture_url: student.profile_picture_url,
           student_number: student.student_id,
-          status: record?.status || "present",
+          status: record?.status || null,
           is_marked: !!record,
           notes: record?.notes || "",
         };
@@ -339,7 +339,7 @@ export default function AttendanceScreen() {
             last_name: student.last_name,
             profile_picture_url: student.profile_picture_url,
             student_number: student.student_id,
-            status: existingRecord?.status || "present",
+            status: existingRecord?.status || null,
             is_marked: !!existingRecord,
             notes: existingRecord?.notes || "",
           };
@@ -393,15 +393,17 @@ export default function AttendanceScreen() {
     try {
       setSaving(true);
 
-      const attendanceRecords = students.map((student) => ({
-        school_id: profile?.school_id,
-        student_id: student.student_id,
-        class_id: classInfo.id,
-        date: selectedDate,
-        status: student.status,
-        notes: student.notes || null,
-        marked_by: user?.id,
-      }));
+      const attendanceRecords = students
+        .filter((s) => s.status !== null)
+        .map((student) => ({
+          school_id: profile?.school_id,
+          student_id: student.student_id,
+          class_id: classInfo.id,
+          date: selectedDate,
+          status: student.status,
+          notes: student.notes || null,
+          marked_by: user?.id,
+        }));
 
       // Delete existing records
       const { error: deleteError } = await supabase
@@ -439,18 +441,18 @@ export default function AttendanceScreen() {
     return { present, absent, late, excused, total: students.length };
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string | null) => {
     switch (status) {
       case "present":
-        return "#28a745";
+        return "#10B981"; // Emerald
       case "absent":
-        return "#dc3545";
+        return "#EF4444"; // Red
       case "late":
-        return "#ffc107";
+        return "#F59E0B"; // Amber
       case "excused":
-        return "#6c757d";
+        return "#3B82F6"; // Blue
       default:
-        return colors.primary;
+        return colors.placeholderText;
     }
   };
 

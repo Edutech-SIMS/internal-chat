@@ -428,7 +428,6 @@ export default function ChatScreen() {
     const channel = setupRealtimeSubscription();
 
     return () => {
-      console.log(`Cleaning up real-time subscription for chat: ${chatId}`);
       supabase.removeChannel(channel);
     };
   }, [chatId, profile?.user_id]);
@@ -442,9 +441,6 @@ export default function ChatScreen() {
 
   // Logic
   const setupRealtimeSubscription = () => {
-    console.log(`[Realtime] Initializing channel for chatId: ${chatId}`);
-
-    // Create a single unique channel for this chat room
     const channel = supabase.channel(`chat:${chatId}`);
 
     channel
@@ -459,7 +455,6 @@ export default function ChatScreen() {
         },
         (payload: any) => {
           const userId = payload.new?.user_id || payload.old?.user_id;
-          console.log("[Realtime] Typing Event:", payload.eventType, userId);
 
           if (
             payload.eventType === "INSERT" ||
@@ -500,7 +495,6 @@ export default function ChatScreen() {
           filter: `group_id=eq.${chatId}`,
         },
         (payload: any) => {
-          console.log("[Realtime] Read Receipt Event:", payload.eventType);
           // Re-fetch all read statuses to keep UI in sync
           fetchReadStatuses();
         }
@@ -515,15 +509,9 @@ export default function ChatScreen() {
           filter: `group_id=eq.${chatId}`,
         },
         async (payload: any) => {
-          console.log("[Realtime] New Message INSERT:", payload.new.id);
-
           // Avoid duplicate messages (e.g. if we sent it from this device)
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.new.id)) {
-              console.log(
-                "[Realtime] Duplicate message, skipping:",
-                payload.new.id
-              );
               return prev;
             }
 
@@ -551,12 +539,8 @@ export default function ChatScreen() {
         }
       )
       .subscribe((status, err) => {
-        console.log(`[Realtime] Channel Status [${chatId}]:`, status);
         if (err) {
           console.error(`[Realtime] Subscription Error [${chatId}]:`, err);
-        }
-        if (status === "CHANNEL_ERROR") {
-          console.warn("[Realtime] Channel error. Check RLS and Replication.");
         }
       });
 
@@ -624,11 +608,18 @@ export default function ChatScreen() {
   const markAsRead = async () => {
     if (!profile?.user_id) return;
     try {
+      // Use the timestamp of the last message if available, otherwise fallback to now.
+      // This prevents "unread" bugs where client clock < server clock
+      const lastMessageTime =
+        messages.length > 0
+          ? messages[messages.length - 1].created_at
+          : new Date().toISOString();
+
       await supabase.from("group_reads").upsert(
         {
           group_id: chatId,
           user_id: profile.user_id,
-          last_read_at: new Date().toISOString(),
+          last_read_at: lastMessageTime,
         },
         { onConflict: "user_id,group_id" }
       );

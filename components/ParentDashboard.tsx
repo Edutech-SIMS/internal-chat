@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,6 +15,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
 import { getThemeColors } from "../themes";
+import { StatCard } from "./StatCard";
 import { ThemedText as Text } from "./ThemedText";
 
 interface Student {
@@ -45,6 +47,7 @@ interface ParentDashboardProps {
 }
 
 export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
+  const router = useRouter();
   const { user, profile } = useAuth();
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
@@ -286,6 +289,34 @@ export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
     </View>
   );
 
+  const renderStats = () => {
+    const selectedStudent = students.find((s) => s.id === selectedStudentId);
+    if (!selectedStudent) return null;
+
+    return (
+      <View style={styles.statsContainer}>
+        <StatCard
+          label="Attendance"
+          value={`${selectedStudent.attendanceRate}%`}
+          icon="stats-chart"
+          colors={["#4F46E5", "#3730A3"]}
+        />
+        <StatCard
+          label="Days Present"
+          value={selectedStudent.presentCount}
+          icon="calendar-outline"
+          colors={["#10B981", "#059669"]}
+        />
+        <StatCard
+          label="Total Days"
+          value={selectedStudent.totalDays}
+          icon="hourglass-outline"
+          colors={["#F59E0B", "#D97706"]}
+        />
+      </View>
+    );
+  };
+
   const getGradeStyle = (grade: string) => {
     if (grade.includes("A")) return styles.gradeA;
     if (grade.includes("B")) return styles.gradeB;
@@ -304,9 +335,18 @@ export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
         </Text>
       </View>
       <TouchableOpacity
-        style={[styles.profileButton, { backgroundColor: colors.card }]}
+        style={[
+          styles.profileButton,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            borderWidth: 1,
+          },
+        ]}
+        onPress={() => router.push("/(tabs)/settings")}
       >
-        <Ionicons name="person" size={24} color={colors.primary} />
+        <Ionicons name="person" size={22} color={colors.primary} />
+        <View style={[styles.profileStatus, { backgroundColor: "#10B981" }]} />
       </TouchableOpacity>
     </View>
   );
@@ -341,6 +381,7 @@ export default function ParentDashboard({ onNavigate }: ParentDashboardProps) {
       }
     >
       {renderHeader()}
+      {renderStats()}
 
       <Text
         style={[styles.sectionTitle, { color: colors.text, marginTop: 20 }]}
@@ -408,18 +449,29 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   profileButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    position: "relative",
   },
-
+  profileStatus: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+  statsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 24,
+    gap: 10,
+  },
   eventsSection: {
     marginBottom: 24,
   },
@@ -432,11 +484,8 @@ const styles = StyleSheet.create({
     marginRight: 12,
     width: 140,
     borderLeftWidth: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.05)",
   },
   eventDate: {
     fontSize: 14,
@@ -461,13 +510,8 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
     borderWidth: 1,
-    borderColor: "transparent",
+    borderColor: "rgba(0,0,0,0.1)",
   },
   studentAvatar: {
     width: 50,
@@ -516,11 +560,8 @@ const styles = StyleSheet.create({
     padding: 16,
     marginRight: 12,
     width: 250,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
   },
   assessmentHeader: {
     flexDirection: "row",

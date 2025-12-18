@@ -180,7 +180,8 @@ export default function ChatsScreen() {
             .from("messages")
             .select("*", { count: "exact", head: true })
             .eq("group_id", group.id)
-            .gt("created_at", lastRead);
+            .gt("created_at", lastRead)
+            .neq("user_id", user.id);
 
           return {
             id: group.id,
