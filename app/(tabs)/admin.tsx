@@ -3,10 +3,13 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
+  Image,
   Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -29,11 +32,11 @@ export default function AdminScreen() {
     teachers: 0,
     parents: 0,
   });
-  const [recentUsers, setRecentUsers] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showAllUsersModal, setShowAllUsersModal] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+  const [showUserModal, setShowUserModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [school, setSchool] = useState<any>(null);
 
@@ -56,7 +59,9 @@ export default function AdminScreen() {
       // Fetch Stats
       const { data: users, error: usersError } = await supabase
         .from("profiles")
-        .select("id, full_name, email, created_at, user_roles(role)")
+        .select(
+          "id, user_id, full_name, email, mobile_number, avatar_url, created_at, user_roles(role)"
+        )
         .eq("school_id", profile?.school_id)
         .order("created_at", { ascending: false });
 
@@ -78,7 +83,6 @@ export default function AdminScreen() {
       });
 
       setAllUsers(users || []);
-      setRecentUsers(users?.slice(0, 5) || []);
     } catch (error) {
       console.error("Error fetching admin stats:", error);
     } finally {
@@ -97,6 +101,161 @@ export default function AdminScreen() {
       user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleUserPress = (user: any) => {
+    setSelectedUser(user);
+    setShowUserModal(true);
+  };
+
+  const renderDetailRow = (
+    icon: keyof typeof Ionicons.glyphMap,
+    label: string,
+    value: string | null | undefined
+  ) => (
+    <View style={styles.detailRow}>
+      <Ionicons name={icon} size={20} color={colors.primary} />
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.detailLabel, { color: colors.placeholderText }]}>
+          {label}
+        </Text>
+        <Text style={[styles.detailValue, { color: colors.text }]}>
+          {value || "N/A"}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const renderUserModal = () => {
+    if (!selectedUser) return null;
+
+    return (
+      <Modal
+        visible={showUserModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowUserModal(false)}
+      >
+        <View
+          style={[styles.modalOverlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}
+        >
+          <View
+            style={[
+              styles.modalContentFixed,
+              { backgroundColor: colors.background },
+            ]}
+          >
+            <View
+              style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+            >
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                User Profile
+              </Text>
+              <TouchableOpacity onPress={() => setShowUserModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <View style={styles.modalProfileSection}>
+                <View
+                  style={[
+                    styles.modalAvatar,
+                    { backgroundColor: colors.primary + "15" },
+                  ]}
+                >
+                  {selectedUser.avatar_url ? (
+                    <Image
+                      source={{ uri: selectedUser.avatar_url }}
+                      style={{ width: 80, height: 80, borderRadius: 40 }}
+                    />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.modalAvatarText,
+                        { color: colors.primary },
+                      ]}
+                    >
+                      {selectedUser.full_name?.[0]?.toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+                <Text style={[styles.userNameLarge, { color: colors.text }]}>
+                  {selectedUser.full_name}
+                </Text>
+                <Text
+                  style={[
+                    styles.userEmailLarge,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  {selectedUser.email}
+                </Text>
+              </View>
+
+              <View
+                style={[styles.detailSection, { backgroundColor: colors.card }]}
+              >
+                <Text
+                  style={[styles.detailSectionTitle, { color: colors.primary }]}
+                >
+                  ACCOUNT INFORMATION
+                </Text>
+                {renderDetailRow(
+                  "mail-outline",
+                  "Email Address",
+                  selectedUser.email
+                )}
+                {renderDetailRow(
+                  "call-outline",
+                  "Mobile Number",
+                  selectedUser.mobile_number
+                )}
+                {renderDetailRow(
+                  "calendar-outline",
+                  "Joined Date",
+                  new Date(selectedUser.created_at).toLocaleDateString()
+                )}
+                <View style={styles.detailRow}>
+                  <Ionicons
+                    name="shield-outline"
+                    size={20}
+                    color={colors.primary}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.detailLabel,
+                        { color: colors.placeholderText },
+                      ]}
+                    >
+                      Assigned Roles
+                    </Text>
+                    <View style={styles.rolesContainer}>
+                      {selectedUser.user_roles?.map((r: any, index: number) => (
+                        <View
+                          key={index}
+                          style={[
+                            styles.roleBadge,
+                            { backgroundColor: colors.primary + "20" },
+                          ]}
+                        >
+                          <Text
+                            style={[styles.roleText, { color: colors.primary }]}
+                          >
+                            {r.role}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
 
   const renderHeader = () => (
     <View style={styles.headerContainer}>
@@ -153,92 +312,7 @@ export default function AdminScreen() {
     </View>
   );
 
-  const renderRecentActivity = () => (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          Recent Users
-        </Text>
-        <TouchableOpacity onPress={() => setShowAllUsersModal(true)}>
-          <Text style={[styles.seeAllText, { color: colors.primary }]}>
-            View All
-          </Text>
-        </TouchableOpacity>
-      </View>
-      {recentUsers.map((user) => (
-        <View
-          key={user.id}
-          style={[styles.activityItem, { backgroundColor: colors.card }]}
-        >
-          <View
-            style={[styles.activityIcon, { backgroundColor: colors.border }]}
-          >
-            <Ionicons
-              name="person-add"
-              size={16}
-              color={colors.placeholderText}
-            />
-          </View>
-          <View style={styles.activityContent}>
-            <Text style={[styles.activityTitle, { color: colors.text }]}>
-              {user.full_name}
-            </Text>
-            <Text
-              style={[
-                styles.activitySubtitle,
-                { color: colors.placeholderText },
-              ]}
-            >
-              {user.user_roles?.map((r: any) => r.role).join(", ") || "No Role"}
-            </Text>
-          </View>
-          <Text
-            style={[styles.activityTime, { color: colors.placeholderText }]}
-          >
-            {new Date(user.created_at).toLocaleDateString()}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
-
-  const renderUserItem = ({ item }: { item: any }) => (
-    <View
-      style={[
-        styles.userItem,
-        { backgroundColor: colors.card, borderBottomColor: colors.border },
-      ]}
-    >
-      <View style={[styles.userAvatar, { backgroundColor: colors.border }]}>
-        <Text style={[styles.avatarText, { color: colors.text }]}>
-          {item.full_name?.[0]?.toUpperCase() || "?"}
-        </Text>
-      </View>
-      <View style={styles.userInfo}>
-        <Text style={[styles.userName, { color: colors.text }]}>
-          {item.full_name}
-        </Text>
-        <Text style={[styles.userEmail, { color: colors.placeholderText }]}>
-          {item.email}
-        </Text>
-        <View style={styles.rolesContainer}>
-          {item.user_roles?.map((r: any, index: number) => (
-            <View
-              key={index}
-              style={[
-                styles.roleBadge,
-                { backgroundColor: colors.primary + "20" },
-              ]}
-            >
-              <Text style={[styles.roleText, { color: colors.primary }]}>
-                {r.role}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </View>
-  );
+  // renderSystemUsers is now integrated into the main return for better scroll control
 
   if (loading) {
     return (
@@ -259,48 +333,100 @@ export default function AdminScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
+      <View style={[styles.container, { flex: 1, paddingBottom: 0 }]}>
         {renderHeader()}
         {renderStats()}
-        {renderRecentActivity()}
-      </ScrollView>
 
-      <Modal
-        visible={showAllUsersModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAllUsersModal(false)}
-      >
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            System Users
+          </Text>
+          <Text style={{ color: colors.placeholderText, fontSize: 13 }}>
+            {filteredUsers.length} Total
+          </Text>
+        </View>
+
         <View
           style={[
-            styles.modalContainer,
-            { backgroundColor: colors.background },
+            styles.searchContainer,
+            { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
-          <View
-            style={[styles.modalHeader, { borderBottomColor: colors.border }]}
-          >
-            <Text style={[styles.modalTitle, { color: colors.text }]}>
-              All Users
-            </Text>
-            <TouchableOpacity onPress={() => setShowAllUsersModal(false)}>
-              <Ionicons name="close" size={24} color={colors.text} />
+          <Ionicons name="search" size={20} color={colors.placeholderText} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Search name or email..."
+            placeholderTextColor={colors.placeholderText}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <Ionicons
+                name="close-circle"
+                size={20}
+                color={colors.placeholderText}
+              />
             </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalContent}>
-            {filteredUsers.map((user) => (
-              <View key={user.id}>{renderUserItem({ item: user })}</View>
-            ))}
-          </ScrollView>
+          )}
         </View>
-      </Modal>
+
+        <FlatList
+          data={filteredUsers}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item: user }) => (
+            <TouchableOpacity
+              style={[styles.activityItem, { backgroundColor: colors.card }]}
+              onPress={() => handleUserPress(user)}
+              activeOpacity={0.7}
+            >
+              <View
+                style={[
+                  styles.activityIcon,
+                  { backgroundColor: colors.primary + "15" },
+                ]}
+              >
+                <Text style={{ color: colors.primary, fontWeight: "bold" }}>
+                  {user.full_name?.[0]?.toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.activityContent}>
+                <Text style={[styles.activityTitle, { color: colors.text }]}>
+                  {user.full_name}
+                </Text>
+                <Text
+                  style={[
+                    styles.activitySubtitle,
+                    { color: colors.placeholderText },
+                  ]}
+                >
+                  {user.user_roles?.map((r: any) => r.role).join(", ") ||
+                    "No Role"}
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.placeholderText}
+              />
+            </TouchableOpacity>
+          )}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={{ color: colors.placeholderText }}>
+                No users found
+              </Text>
+            </View>
+          }
+        />
+      </View>
+
+      {renderUserModal()}
     </SafeAreaView>
   );
 }
@@ -362,10 +488,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
   },
-  seeAllText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
   activityItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -392,12 +514,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  activityTime: {
-    fontSize: 11,
-  },
-  modalContainer: {
-    flex: 1,
-  },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -408,39 +524,6 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "bold",
-  },
-  modalContent: {
-    flex: 1,
-    padding: 10,
-  },
-  userItem: {
-    flexDirection: "row",
-    padding: 15,
-    borderBottomWidth: 1,
-    alignItems: "center",
-  },
-  userAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 15,
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: "600",
-  },
-  userInfo: {
-    flex: 1,
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  userEmail: {
-    fontSize: 14,
-    marginTop: 2,
   },
   rolesContainer: {
     flexDirection: "row",
@@ -457,5 +540,85 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "bold",
     textTransform: "uppercase",
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalContentFixed: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: "60%",
+    paddingBottom: 20,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  modalProfileSection: {
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  modalAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  modalAvatarText: {
+    fontSize: 32,
+    fontWeight: "bold",
+  },
+  userNameLarge: {
+    fontSize: 22,
+    fontWeight: "bold",
+    marginBottom: 4,
+  },
+  userEmailLarge: {
+    fontSize: 14,
+  },
+  detailSection: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+  },
+  detailSectionTitle: {
+    fontSize: 11,
+    fontWeight: "bold",
+    marginBottom: 12,
+    letterSpacing: 1,
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  detailLabel: {
+    fontSize: 11,
+    marginBottom: 2,
+  },
+  detailValue: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    height: 50,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 16,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    padding: 40,
   },
 });

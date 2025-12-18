@@ -54,6 +54,7 @@ interface Message {
   profiles: {
     full_name: string;
     email: string;
+    roles?: { role: string }[];
   };
   reply_to_id?: string | null;
   reply_message?: {
@@ -63,11 +64,17 @@ interface Message {
     is_deleted?: boolean;
     profiles: {
       full_name: string;
+      roles?: { role: string }[];
     };
   } | null;
   is_deleted?: boolean;
   deleted_at?: string;
   deleted_by?: string;
+  readInfo?: {
+    readCount: number;
+    totalMembers: number;
+    isReadByAll: boolean;
+  };
 }
 
 interface GroupMember {
@@ -129,6 +136,8 @@ const MessageItem = React.memo(
     isAnnouncementGroup,
     showAvatar,
     onDocPress,
+    onImagePress,
+    onQuotePress,
     isDarkMode,
     onLongPress,
   }: {
@@ -138,6 +147,8 @@ const MessageItem = React.memo(
     isAnnouncementGroup: boolean;
     showAvatar: boolean;
     onDocPress: (url: string, name: string) => void;
+    onImagePress: (url: string) => void;
+    onQuotePress: (messageId: string) => void;
     isDarkMode: boolean;
     onLongPress: (message: Message) => void;
   }) => {
@@ -226,7 +237,9 @@ const MessageItem = React.memo(
 
             {/* Quoted Message */}
             {item.reply_message?.id && !item.is_deleted && (
-              <View
+              <TouchableOpacity
+                onPress={() => onQuotePress(item.reply_to_id!)}
+                activeOpacity={0.7}
                 style={[
                   styles.quotedMessageContainer,
                   {
@@ -265,7 +278,7 @@ const MessageItem = React.memo(
                         ? `File: ${item.reply_message.attachment_name}`
                         : "Attachment")}
                 </Text>
-              </View>
+              </TouchableOpacity>
             )}
 
             {item.attachment_url && !item.is_deleted && (
@@ -273,7 +286,7 @@ const MessageItem = React.memo(
                 {isImage ? (
                   <TouchableOpacity
                     onPress={() => {
-                      (item as any).onImagePress?.(item.attachment_url!);
+                      onImagePress(item.attachment_url!);
                     }}
                   >
                     <Image
@@ -346,13 +359,26 @@ const MessageItem = React.memo(
                 },
               ]}
             >
-              {item.is_deleted
-                ? item.deleted_by === user?.id
-                  ? "You deleted this message"
-                  : item.deleted_by !== item.user_id
-                  ? "This message was deleted by an administrator"
-                  : "This message was deleted"
-                : item.content}
+              {(() => {
+                if (!item.is_deleted) return item.content;
+                if (item.deleted_by === user?.id)
+                  return "You deleted this message";
+
+                // If it's moderation (deleted by someone other than the sender)
+                if (item.deleted_by !== item.user_id) {
+                  return "This message was deleted by an administrator";
+                }
+
+                // If it's a self-delete by an admin
+                const senderIsAdmin = item.profiles?.roles?.some(
+                  (r) => r.role === "admin" || r.role === "superadmin"
+                );
+                if (senderIsAdmin) {
+                  return "This message was deleted by an administrator";
+                }
+
+                return "This message was deleted";
+              })()}
             </Text>
 
             <View
@@ -657,7 +683,7 @@ export default function ChatScreen() {
       const { data, error } = await supabase
         .from("messages")
         .select(
-          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))`
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email, roles:user_roles(role)), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name, roles:user_roles(role)))`
         )
         .eq("id", messageId)
         .single();
@@ -837,7 +863,7 @@ export default function ChatScreen() {
       let query = supabase
         .from("messages")
         .select(
-          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))`
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email, roles:user_roles(role)), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name, roles:user_roles(role)))`
         )
         .eq("group_id", chatId)
         .eq("school_id", schoolId)
@@ -1040,7 +1066,7 @@ export default function ChatScreen() {
         },
       ])
       .select(
-        "*, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))"
+        "*, profiles!messages_user_id_fkey (full_name, email, roles:user_roles(role)), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name, roles:user_roles(role)))"
       )
       .single();
 
@@ -1123,30 +1149,33 @@ export default function ChatScreen() {
 
       return (
         <MessageItem
-          item={
-            {
-              ...item,
-              readInfo: {
-                readCount,
-                totalMembers: otherMembersCount,
-                isReadByAll,
-              },
-              onImagePress: (url: string) => {
-                setViewerImage(url);
-                setViewerVisible(true);
-              },
-              onDocPress: (url: string, name: string) => {
-                setDocViewerUrl(url);
-                setDocViewerName(name);
-                setDocViewerVisible(true);
-              },
-            } as any
-          }
+          item={{
+            ...item,
+            readInfo: {
+              readCount,
+              totalMembers: otherMembersCount,
+              isReadByAll,
+            },
+          }}
           user={user}
           colors={colors}
           isDarkMode={isDarkMode}
           isAnnouncementGroup={isAnnouncementGroup}
           showAvatar={isLastFromUser}
+          onImagePress={(url: string) => {
+            setViewerImage(url);
+            setViewerVisible(true);
+          }}
+          onQuotePress={(messageId: string) => {
+            const index = messages.findIndex((m) => m.id === messageId);
+            if (index !== -1) {
+              flatListRef.current?.scrollToIndex({
+                index,
+                animated: true,
+                viewPosition: 0.5,
+              });
+            }
+          }}
           onDocPress={(url, name) => {
             setDocViewerUrl(url);
             setDocViewerName(name);
@@ -1322,6 +1351,16 @@ export default function ChatScreen() {
               onContentSizeChange={() =>
                 flatListRef.current?.scrollToEnd({ animated: true })
               }
+              onScrollToIndexFailed={(info) => {
+                const wait = new Promise((resolve) => setTimeout(resolve, 500));
+                wait.then(() => {
+                  flatListRef.current?.scrollToIndex({
+                    index: info.index,
+                    animated: true,
+                    viewPosition: 0.5,
+                  });
+                });
+              }}
             />
           )}
         </Animated.View>
