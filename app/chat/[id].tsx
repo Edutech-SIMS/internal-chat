@@ -55,6 +55,19 @@ interface Message {
     full_name: string;
     email: string;
   };
+  reply_to_id?: string | null;
+  reply_message?: {
+    id: string;
+    content: string;
+    attachment_name?: string;
+    is_deleted?: boolean;
+    profiles: {
+      full_name: string;
+    };
+  } | null;
+  is_deleted?: boolean;
+  deleted_at?: string;
+  deleted_by?: string;
 }
 
 interface GroupMember {
@@ -117,6 +130,7 @@ const MessageItem = React.memo(
     showAvatar,
     onDocPress,
     isDarkMode,
+    onLongPress,
   }: {
     item: Message;
     user: any;
@@ -125,6 +139,7 @@ const MessageItem = React.memo(
     showAvatar: boolean;
     onDocPress: (url: string, name: string) => void;
     isDarkMode: boolean;
+    onLongPress: (message: Message) => void;
   }) => {
     const isMyMessage = item.user_id === user?.id;
     const alignRight = !isAnnouncementGroup && isMyMessage;
@@ -176,145 +191,215 @@ const MessageItem = React.memo(
           alignRight ? styles.rowRight : styles.rowLeft,
         ]}
       >
-        <View
-          style={[
-            styles.messageBubble,
-            alignRight
-              ? { backgroundColor: colors.primary, borderBottomRightRadius: 4 }
-              : {
-                  backgroundColor: isDarkMode ? colors.card : "#F2F2F2",
-                  borderBottomLeftRadius: 4,
-                  // No shadow as requested
-                },
-          ]}
+        <TouchableOpacity
+          onLongPress={() => {
+            if (!item.is_deleted) {
+              onLongPress(item);
+            }
+          }}
+          activeOpacity={item.is_deleted ? 1 : 0.9}
+          delayLongPress={300}
         >
-          {!alignRight && (
-            <Text
-              style={[styles.senderName, { color: colors.placeholderText }]}
-              numberOfLines={1}
-            >
-              {item.profiles?.full_name || item.profiles?.email || "Unknown"}
-            </Text>
-          )}
-
-          {item.attachment_url && (
-            <View style={styles.attachmentContainer}>
-              {isImage ? (
-                <TouchableOpacity
-                  onPress={() => {
-                    (item as any).onImagePress?.(item.attachment_url!);
-                  }}
-                >
-                  <Image
-                    source={{ uri: item.attachment_url }}
-                    style={[
-                      styles.attachedImage,
-                      { borderColor: colors.border },
-                    ]}
-                    resizeMode="cover"
-                  />
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[
-                    styles.fileAttachment,
-                    { backgroundColor: "rgba(0,0,0,0.1)" },
-                  ]}
-                  onPress={() =>
-                    onDocPress(
-                      item.attachment_url!,
-                      item.attachment_name || "Attachment"
-                    )
-                  }
-                >
-                  <View style={styles.fileIconContainer}>
-                    <Ionicons
-                      name="document-text"
-                      size={24}
-                      color={alignRight ? "white" : colors.primary}
-                    />
-                  </View>
-                  <View style={styles.fileInfo}>
-                    <Text
-                      style={[
-                        styles.fileName,
-                        { color: alignRight ? "white" : colors.text },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {item.attachment_name || "Attachment"}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.fileType,
-                        {
-                          color: alignRight
-                            ? "rgba(255,255,255,0.8)"
-                            : colors.placeholderText,
-                        },
-                      ]}
-                    >
-                      Click to view
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-
-          <Text
+          <View
             style={[
-              styles.messageText,
-              alignRight ? { color: "#FFFFFF" } : { color: colors.text },
+              styles.messageBubble,
+              alignRight
+                ? {
+                    backgroundColor: colors.primary,
+                    borderBottomRightRadius: 4,
+                  }
+                : {
+                    backgroundColor: isDarkMode ? colors.card : "#F2F2F2",
+                    borderBottomLeftRadius: 4,
+                    // No shadow as requested
+                  },
             ]}
           >
-            {item.content}
-          </Text>
-
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: 4,
-              marginTop: 4,
-            }}
-          >
-            <Text
-              style={[
-                styles.timestamp,
-                alignRight
-                  ? { color: "rgba(255, 255, 255, 0.7)" }
-                  : { color: colors.placeholderText },
-                { marginTop: 0 },
-              ]}
-            >
-              {formatTime(item.created_at)}
-            </Text>
-            {renderReadReceipt()}
-          </View>
-
-          {showAvatar && (
-            <View
-              style={[
-                styles.avatarOverlay,
-                alignRight ? { right: -38 } : { left: -38 },
-              ]}
-            >
-              <View
-                style={[styles.avatar, { backgroundColor: colors.primary }]}
+            {!alignRight && (
+              <Text
+                style={[styles.senderName, { color: colors.placeholderText }]}
+                numberOfLines={1}
               >
-                <Text style={styles.avatarText}>
-                  {getInitials(
-                    alignRight
-                      ? user?.user_metadata?.full_name || "Me"
-                      : item.profiles?.full_name || "U"
-                  )}
+                {item.profiles?.full_name || item.profiles?.email || "Unknown"}
+              </Text>
+            )}
+
+            {/* Quoted Message */}
+            {item.reply_message?.id && !item.is_deleted && (
+              <View
+                style={[
+                  styles.quotedMessageContainer,
+                  {
+                    borderLeftColor: alignRight ? "#FFF" : colors.primary,
+                    backgroundColor: alignRight
+                      ? "rgba(255,255,255,0.1)"
+                      : "rgba(0,0,0,0.05)",
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.quotedMessageSender,
+                    {
+                      color: alignRight
+                        ? "rgba(255,255,255,0.9)"
+                        : colors.primary,
+                    },
+                  ]}
+                >
+                  {item.reply_message.profiles?.full_name || "User"}
+                </Text>
+                <Text
+                  style={[
+                    styles.quotedMessageContent,
+                    {
+                      color: alignRight ? "rgba(255,255,255,0.7)" : colors.text,
+                    },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.reply_message.is_deleted
+                    ? "Deleted message"
+                    : item.reply_message.content ||
+                      (item.reply_message.attachment_name
+                        ? `File: ${item.reply_message.attachment_name}`
+                        : "Attachment")}
                 </Text>
               </View>
+            )}
+
+            {item.attachment_url && !item.is_deleted && (
+              <View style={styles.attachmentContainer}>
+                {isImage ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      (item as any).onImagePress?.(item.attachment_url!);
+                    }}
+                  >
+                    <Image
+                      source={{ uri: item.attachment_url }}
+                      style={[
+                        styles.attachedImage,
+                        { borderColor: colors.border },
+                      ]}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.fileAttachment,
+                      { backgroundColor: "rgba(0,0,0,0.1)" },
+                    ]}
+                    onPress={() =>
+                      onDocPress(
+                        item.attachment_url!,
+                        item.attachment_name || "Attachment"
+                      )
+                    }
+                  >
+                    <View style={styles.fileIconContainer}>
+                      <Ionicons
+                        name="document-text"
+                        size={24}
+                        color={alignRight ? "white" : colors.primary}
+                      />
+                    </View>
+                    <View style={styles.fileInfo}>
+                      <Text
+                        style={[
+                          styles.fileName,
+                          { color: alignRight ? "white" : colors.text },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.attachment_name || "Attachment"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.fileType,
+                          {
+                            color: alignRight
+                              ? "rgba(255,255,255,0.8)"
+                              : colors.placeholderText,
+                          },
+                        ]}
+                      >
+                        Click to view
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            <Text
+              style={[
+                styles.messageText,
+                alignRight ? { color: "#FFFFFF" } : { color: colors.text },
+                item.is_deleted && {
+                  fontStyle: "italic",
+                  opacity: 0.7,
+                  color: alignRight
+                    ? "rgba(255,255,255,0.8)"
+                    : colors.placeholderText,
+                },
+              ]}
+            >
+              {item.is_deleted
+                ? item.deleted_by === user?.id
+                  ? "You deleted this message"
+                  : item.deleted_by !== item.user_id
+                  ? "This message was deleted by an administrator"
+                  : "This message was deleted"
+                : item.content}
+            </Text>
+
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: 4,
+                marginTop: 4,
+              }}
+            >
+              <Text
+                style={[
+                  styles.timestamp,
+                  alignRight
+                    ? { color: "rgba(255, 255, 255, 0.7)" }
+                    : { color: colors.placeholderText },
+                  { marginTop: 0 },
+                ]}
+              >
+                {formatTime(item.created_at)}
+              </Text>
+              {renderReadReceipt()}
             </View>
-          )}
-        </View>
+
+            {showAvatar && (
+              <View
+                style={[
+                  styles.avatarOverlay,
+                  alignRight ? { right: -38 } : { left: -38 },
+                ]}
+              >
+                <View
+                  style={[styles.avatar, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={styles.avatarText}>
+                    {getInitials(
+                      alignRight
+                        ? user?.user_metadata?.full_name || "Me"
+                        : item.profiles?.full_name || "U"
+                    )}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -350,6 +435,10 @@ export default function ChatScreen() {
   const [docViewerUrl, setDocViewerUrl] = useState<string | null>(null);
   const [docViewerName, setDocViewerName] = useState<string | null>(null);
   const [viewerVisible, setViewerVisible] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [optionsVisible, setOptionsVisible] = useState(false);
+  const [selectedMessageForOptions, setSelectedMessageForOptions] =
+    useState<Message | null>(null);
   // Hooks
   const { user, profile, schoolId } = useAuth();
   const insets = useSafeAreaInsets();
@@ -537,6 +626,23 @@ export default function ChatScreen() {
           markAsRead();
         }
       )
+      // 4. Updated messages (including Soft Deletes)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "messages",
+          filter: `group_id=eq.${chatId}`,
+        },
+        (payload: any) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === payload.new.id ? { ...m, ...payload.new } : m
+            )
+          );
+        }
+      )
       .subscribe((status, err) => {
         if (err) {
           console.error(`[Realtime] Subscription Error [${chatId}]:`, err);
@@ -551,17 +657,28 @@ export default function ChatScreen() {
       const { data, error } = await supabase
         .from("messages")
         .select(
-          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))`
         )
         .eq("id", messageId)
         .single();
 
       if (!error && data) {
+        const replyMsg = Array.isArray(data.reply_message)
+          ? data.reply_message[0]
+          : data.reply_message;
         const formattedMessage = {
           ...data,
           profiles: Array.isArray(data.profiles)
             ? data.profiles[0]
             : data.profiles,
+          reply_message: replyMsg
+            ? {
+                ...replyMsg,
+                profiles: Array.isArray(replyMsg.profiles)
+                  ? replyMsg.profiles[0]
+                  : replyMsg.profiles,
+              }
+            : null,
         };
 
         setMessages((prev) =>
@@ -720,7 +837,7 @@ export default function ChatScreen() {
       let query = supabase
         .from("messages")
         .select(
-          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles (full_name, email)`
+          `id, user_id, content, created_at, attachment_url, attachment_type, attachment_name, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))`
         )
         .eq("group_id", chatId)
         .eq("school_id", schoolId)
@@ -737,12 +854,25 @@ export default function ChatScreen() {
         console.error("Error fetching messages:", error);
       } else {
         const newMessages = (data || [])
-          .map((msg: any) => ({
-            ...msg,
-            profiles: Array.isArray(msg.profiles)
-              ? msg.profiles[0]
-              : msg.profiles,
-          }))
+          .map((msg: any) => {
+            const replyMsg = Array.isArray(msg.reply_message)
+              ? msg.reply_message[0]
+              : msg.reply_message;
+            return {
+              ...msg,
+              profiles: Array.isArray(msg.profiles)
+                ? msg.profiles[0]
+                : msg.profiles,
+              reply_message: replyMsg
+                ? {
+                    ...replyMsg,
+                    profiles: Array.isArray(replyMsg.profiles)
+                      ? replyMsg.profiles[0]
+                      : replyMsg.profiles,
+                  }
+                : null,
+            };
+          })
           .reverse();
 
         if (data.length < 50) setHasMoreMessages(false);
@@ -827,6 +957,52 @@ export default function ChatScreen() {
     }
   };
 
+  const handleLongPressMessage = useCallback((message: Message) => {
+    setSelectedMessageForOptions(message);
+    setOptionsVisible(true);
+  }, []);
+
+  const handleDeleteMessage = async (message: Message) => {
+    if (message.user_id !== profile?.user_id && !isGroupAdmin) {
+      Alert.alert(
+        "Error",
+        "You do not have permission to delete this message."
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Delete Message",
+      "Are you sure you want to delete this message? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from("messages")
+                .update({
+                  is_deleted: true,
+                  deleted_at: new Date().toISOString(),
+                  deleted_by: profile?.user_id,
+                })
+                .eq("id", message.id);
+
+              if (error) throw error;
+
+              setOptionsVisible(false);
+              setSelectedMessageForOptions(null);
+            } catch (error: any) {
+              Alert.alert("Error", error.message || "Failed to delete message");
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const sendMessage = async () => {
     if ((!newMessage.trim() && !selectedFile) || sending || isUploading) return;
     if (!canSend) {
@@ -860,9 +1036,12 @@ export default function ChatScreen() {
           attachment_url: attachmentUrl,
           attachment_type: selectedFile?.mimeType || "application/octet-stream",
           attachment_name: selectedFile?.name,
+          reply_to_id: replyingTo?.id || null,
         },
       ])
-      .select("*, profiles(full_name, email)")
+      .select(
+        "*, profiles!messages_user_id_fkey (full_name, email), reply_to_id, is_deleted, deleted_at, deleted_by, reply_message:reply_to_id (id, content, attachment_name, is_deleted, profiles!messages_user_id_fkey (full_name))"
+      )
       .single();
 
     if (error) {
@@ -871,11 +1050,22 @@ export default function ChatScreen() {
       return;
     }
 
+    const replyMsg = Array.isArray(newMessageData.reply_message)
+      ? newMessageData.reply_message[0]
+      : newMessageData.reply_message;
     const formattedMessage = {
       ...newMessageData,
       profiles: Array.isArray(newMessageData.profiles)
         ? newMessageData.profiles[0]
         : newMessageData.profiles,
+      reply_message: replyMsg
+        ? {
+            ...replyMsg,
+            profiles: Array.isArray(replyMsg.profiles)
+              ? replyMsg.profiles[0]
+              : replyMsg.profiles,
+          }
+        : null,
     };
 
     setMessages((prev) => {
@@ -884,6 +1074,7 @@ export default function ChatScreen() {
     });
     setNewMessage("");
     setSelectedFile(null);
+    setReplyingTo(null);
     setSending(false);
 
     // Trigger push notification (fire and forget)
@@ -944,6 +1135,11 @@ export default function ChatScreen() {
                 setViewerImage(url);
                 setViewerVisible(true);
               },
+              onDocPress: (url: string, name: string) => {
+                setDocViewerUrl(url);
+                setDocViewerName(name);
+                setDocViewerVisible(true);
+              },
             } as any
           }
           user={user}
@@ -956,6 +1152,7 @@ export default function ChatScreen() {
             setDocViewerName(name);
             setDocViewerVisible(true);
           }}
+          onLongPress={handleLongPressMessage}
         />
       );
     },
@@ -1178,6 +1375,44 @@ export default function ChatScreen() {
                     size={20}
                     color={colors.notification || "red"}
                   />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {replyingTo && (
+              <View
+                style={[
+                  styles.replyBanner,
+                  {
+                    backgroundColor: colors.background,
+                    borderLeftColor: colors.primary,
+                    borderTopColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={styles.replyBannerContent}>
+                  <Text
+                    style={[styles.replyBannerTitle, { color: colors.primary }]}
+                  >
+                    Replying to {replyingTo.profiles?.full_name || "User"}
+                  </Text>
+                  <Text
+                    style={[styles.replyBannerText, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {replyingTo.is_deleted
+                      ? "Deleted message"
+                      : replyingTo.content ||
+                        (replyingTo.attachment_name
+                          ? `File: ${replyingTo.attachment_name}`
+                          : "Attachment")}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setReplyingTo(null)}
+                  style={styles.replyBannerClose}
+                >
+                  <Ionicons name="close" size={20} color={colors.text} />
                 </TouchableOpacity>
               </View>
             )}
@@ -1533,6 +1768,99 @@ export default function ChatScreen() {
           </View>
         </Modal>
 
+        {/* Message Options Modal */}
+        <Modal
+          visible={optionsVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setOptionsVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setOptionsVisible(false)}
+          >
+            <View
+              style={[
+                styles.optionsContainer,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.optionsTitle, { color: colors.text }]}>
+                Message Options
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.optionItem,
+                  { borderBottomColor: colors.border },
+                ]}
+                onPress={() => {
+                  if (selectedMessageForOptions) {
+                    setReplyingTo(selectedMessageForOptions);
+                    setOptionsVisible(false);
+                    textInputRef.current?.focus();
+                  }
+                }}
+              >
+                <Ionicons
+                  name="arrow-undo-outline"
+                  size={20}
+                  color={colors.primary}
+                />
+                <Text style={[styles.optionText, { color: colors.text }]}>
+                  Reply
+                </Text>
+              </TouchableOpacity>
+
+              {(selectedMessageForOptions?.user_id === profile?.user_id ||
+                isGroupAdmin) && (
+                <TouchableOpacity
+                  style={[
+                    styles.optionItem,
+                    { borderBottomColor: colors.border },
+                  ]}
+                  onPress={() => {
+                    if (selectedMessageForOptions) {
+                      handleDeleteMessage(selectedMessageForOptions);
+                    }
+                  }}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={20}
+                    color={colors.notification || "#dc3545"}
+                  />
+                  <Text
+                    style={[
+                      styles.optionText,
+                      { color: colors.notification || "#dc3545" },
+                    ]}
+                  >
+                    Delete Message
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={() => setOptionsVisible(false)}
+              >
+                <Ionicons
+                  name="close-outline"
+                  size={20}
+                  color={colors.placeholderText}
+                />
+                <Text
+                  style={[styles.optionText, { color: colors.placeholderText }]}
+                >
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
         {/* Image Viewer Modal */}
         <Modal
           visible={viewerVisible}
@@ -1683,13 +2011,44 @@ const styles = StyleSheet.create({
     padding: 40,
   },
   emptyIconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    justifyContent: "center",
+    width: "100%",
+    height: "100%",
+  },
+  quotedMessageContainer: {
+    borderLeftWidth: 3,
+    paddingLeft: 8,
+    marginBottom: 4,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  quotedMessageSender: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  quotedMessageContent: {
+    fontSize: 12,
+  },
+  replyBanner: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
-    opacity: 0.5,
+    padding: 10,
+    borderLeftWidth: 4,
+    borderTopWidth: 1,
+  },
+  replyBannerContent: {
+    flex: 1,
+  },
+  replyBannerTitle: {
+    fontSize: 12,
+    fontWeight: "bold",
+    marginBottom: 2,
+  },
+  replyBannerText: {
+    fontSize: 12,
+  },
+  replyBannerClose: {
+    padding: 4,
   },
   emptyTitle: {
     fontSize: 20,
@@ -2069,5 +2428,38 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "transparent",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  optionsContainer: {
+    width: "80%",
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingVertical: 8,
+    overflow: "hidden",
+  },
+  optionsTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    opacity: 0.6,
+  },
+  optionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 0.5,
+  },
+  optionText: {
+    fontSize: 16,
+    marginLeft: 12,
+    fontWeight: "500",
   },
 });
