@@ -336,7 +336,12 @@ export default function TeacherScreen() {
   const renderHeader = () => (
     <View style={styles.headerContainer}>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.greeting, { color: colors.text }]}>
+        <Text
+          style={[
+            styles.greeting,
+            { color: isDarkMode ? "#94A3B8" : "#64748B" },
+          ]}
+        >
           Welcome back,
         </Text>
         <Text style={[styles.teacherName, { color: colors.text }]}>
@@ -345,7 +350,14 @@ export default function TeacherScreen() {
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
         <View style={{ alignItems: "flex-end" }}>
-          <Text style={{ fontSize: 15, color: colors.text, fontWeight: "600" }}>
+          <Text
+            style={{
+              fontSize: 13,
+              color: colors.text,
+              fontWeight: "700",
+              letterSpacing: -0.3,
+            }}
+          >
             {new Date().toLocaleDateString("en-US", {
               weekday: "short",
               day: "numeric",
@@ -354,15 +366,21 @@ export default function TeacherScreen() {
           </Text>
           <View
             style={{
-              backgroundColor: colors.primary + "20",
+              backgroundColor: colors.primary + "15",
               paddingHorizontal: 8,
               paddingVertical: 2,
-              borderRadius: 4,
+              borderRadius: 6,
               marginTop: 4,
             }}
           >
             <Text
-              style={{ fontSize: 11, color: colors.primary, fontWeight: "700" }}
+              style={{
+                fontSize: 10,
+                color: colors.primary,
+                fontWeight: "800",
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+              }}
             >
               Term 1
             </Text>
@@ -525,25 +543,35 @@ export default function TeacherScreen() {
     return (
       <TouchableOpacity
         key={item.id}
-        style={[styles.studentItem, { backgroundColor: colors.card }]}
+        style={[
+          styles.studentItem,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            borderWidth: 1,
+          },
+        ]}
         onPress={() => handleStudentPress(item)}
+        activeOpacity={0.7}
       >
-        <View
-          style={[
-            styles.studentAvatar,
-            { backgroundColor: colors.primary + "15" },
-          ]}
-        >
+        <View style={styles.studentAvatar}>
           {item.profile_picture_url ? (
             <Image
               source={{ uri: item.profile_picture_url }}
-              style={{ width: 40, height: 40, borderRadius: 20 }}
+              style={styles.listAvatar}
             />
           ) : (
-            <Text style={[styles.avatarText, { color: colors.primary }]}>
-              {item.first_name[0]}
-              {item.last_name[0]}
-            </Text>
+            <View
+              style={[
+                styles.avatarPlaceholder,
+                { backgroundColor: colors.primary + "10" },
+              ]}
+            >
+              <Text style={[styles.avatarLetter, { color: colors.primary }]}>
+                {item.first_name?.[0]?.toUpperCase()}
+                {item.last_name?.[0]?.toUpperCase()}
+              </Text>
+            </View>
           )}
         </View>
         <View style={styles.studentInfo}>
@@ -554,11 +582,13 @@ export default function TeacherScreen() {
             ID: {item.student_id}
           </Text>
         </View>
-        <Ionicons
-          name="chevron-forward"
-          size={18}
-          color={colors.placeholderText}
-        />
+        <View style={styles.activityAction}>
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={colors.placeholderText}
+          />
+        </View>
       </TouchableOpacity>
     );
   };
@@ -1203,12 +1233,15 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   greeting: {
-    fontSize: 16,
-    opacity: 0.7,
+    fontSize: 15,
+    opacity: 0.5,
+    fontWeight: "500",
+    letterSpacing: -0.1,
   },
   teacherName: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -1,
   },
   profileButton: {
     width: 44,
@@ -1231,7 +1264,7 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 24,
+    marginBottom: 32,
     gap: 10,
   },
   section: {
@@ -1245,14 +1278,19 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 12,
+    fontWeight: "800",
+    letterSpacing: -0.5,
   },
   classCard: {
     padding: 16,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
-    minWidth: 160,
+    minWidth: 180,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
   },
   classCardContent: {
     flexDirection: "row",
@@ -1260,25 +1298,31 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   classCardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 2,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   classCardSubtitle: {
     fontSize: 12,
+    opacity: 0.6,
   },
   singleClassCard: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    borderRadius: 16,
+    padding: 20,
+    borderRadius: 20,
     borderWidth: 1,
     gap: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 3,
   },
   singleClassIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 14,
     backgroundColor: "white",
     justifyContent: "center",
     alignItems: "center",
@@ -1287,43 +1331,62 @@ const styles = StyleSheet.create({
   },
   singleClassTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 2,
+    fontWeight: "800",
+    letterSpacing: -0.5,
   },
   singleClassSubtitle: {
     fontSize: 13,
+    opacity: 0.7,
   },
   studentItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.05)",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 3,
   },
   studentAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    marginRight: 14,
+  },
+  listAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+  },
+  avatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  avatarText: {
-    fontSize: 16,
+  avatarLetter: {
+    fontSize: 14,
     fontWeight: "bold",
   },
   studentInfo: {
     flex: 1,
+    justifyContent: "center",
   },
   studentName: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 2,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   studentId: {
     fontSize: 12,
+    marginTop: 2,
+    opacity: 0.6,
+  },
+  activityAction: {
+    paddingLeft: 8,
+    opacity: 0.5,
   },
   emptyState: {
     padding: 20,
