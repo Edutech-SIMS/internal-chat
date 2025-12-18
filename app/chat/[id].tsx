@@ -116,6 +116,7 @@ const MessageItem = React.memo(
     isAnnouncementGroup,
     showAvatar,
     onDocPress,
+    isDarkMode,
   }: {
     item: Message;
     user: any;
@@ -123,6 +124,7 @@ const MessageItem = React.memo(
     isAnnouncementGroup: boolean;
     showAvatar: boolean;
     onDocPress: (url: string, name: string) => void;
+    isDarkMode: boolean;
   }) => {
     const isMyMessage = item.user_id === user?.id;
     const alignRight = !isAnnouncementGroup && isMyMessage;
@@ -180,12 +182,9 @@ const MessageItem = React.memo(
             alignRight
               ? { backgroundColor: colors.primary, borderBottomRightRadius: 4 }
               : {
-                  backgroundColor: colors.card,
+                  backgroundColor: isDarkMode ? colors.card : "#F2F2F2",
                   borderBottomLeftRadius: 4,
-                  shadowColor: "#000",
-                  shadowOpacity: 0.05,
-                  shadowRadius: 2,
-                  elevation: 1,
+                  // No shadow as requested
                 },
           ]}
         >
@@ -949,6 +948,7 @@ export default function ChatScreen() {
           }
           user={user}
           colors={colors}
+          isDarkMode={isDarkMode}
           isAnnouncementGroup={isAnnouncementGroup}
           showAvatar={isLastFromUser}
           onDocPress={(url, name) => {
