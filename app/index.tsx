@@ -128,11 +128,6 @@ export default function Splash() {
     };
   }, []);
 
-  const spin = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-
   if (authLoading || !ready) {
     return (
       <View style={styles.container}>
@@ -189,12 +184,14 @@ export default function Splash() {
             ]}
           >
             {/* Logo Container */}
-            <View style={styles.logoWrapper}>
-              <Image
-                source={require("../assets/images/mind_dark.png")}
-                style={styles.logo}
-                resizeMode="contain"
-              />
+            <View style={styles.logoContainer}>
+              <View style={styles.logoInner}>
+                <Image
+                  source={require("../assets/images/mind-dark-new.png")}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
+              </View>
             </View>
 
             {/* App Name */}
@@ -207,7 +204,7 @@ export default function Splash() {
 
             {/* Loading Indicator */}
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="white" />
+              <ActivityIndicator size="large" color="rgba(255,255,255,0.9)" />
               <ThemedText style={styles.loadingText}>Loading...</ThemedText>
             </View>
           </Animated.View>
@@ -279,57 +276,83 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 40,
   },
-  logoWrapper: {
-    marginBottom: 24,
+  logoContainer: {
+    marginBottom: 40,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 20,
+    },
+    shadowOpacity: 0.35,
+    shadowRadius: 25,
+    elevation: 20,
+  },
+  logoInner: {
+    width: 160,
+    height: 160,
+    backgroundColor: "#ffffff",
+    borderRadius: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
   },
   logo: {
-    width: 180,
-    height: 180,
+    width: "100%",
+    height: "100%",
   },
   appName: {
-    fontSize: 48,
+    fontSize: 52,
     color: "#FFFFFF",
-    // fontFamily handled by type="title"
-    letterSpacing: 2,
+    letterSpacing: 1.5,
     textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 0, height: 3 },
-    textShadowRadius: 6,
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 8,
     marginBottom: 8,
+    fontWeight: "800",
   },
   tagline: {
-    fontSize: 16,
-    color: "rgba(255, 255, 255, 0.95)",
-    // fontFamily: "PlusJakartaSans-Regular", // Handled by default
-    letterSpacing: 1,
-    marginBottom: 40,
+    fontSize: 18,
+    color: "rgba(255, 255, 255, 0.9)",
+    letterSpacing: 0.5,
+    marginBottom: 50,
+    textAlign: "center",
+    fontWeight: "500",
   },
   loadingContainer: {
     alignItems: "center",
-    marginTop: 20,
+    marginTop: 10,
+    backgroundColor: "rgba(0,0,0,0.2)",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 30,
+    flexDirection: "row",
+    gap: 12,
   },
   loadingText: {
-    color: "rgba(255, 255, 255, 0.9)",
-    fontSize: 14,
+    color: "rgba(255, 255, 255, 0.95)",
+    fontSize: 15,
     fontFamily: "PlusJakartaSans-Regular",
-    marginTop: 12,
     letterSpacing: 0.5,
+    marginTop: 0,
   },
   bottomDecoration: {
     position: "absolute",
-    bottom: 40,
+    bottom: 50,
     alignItems: "center",
   },
   decorativeLine: {
-    width: 60,
-    height: 3,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    width: 40,
+    height: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.4)",
     borderRadius: 2,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   poweredBy: {
-    color: "rgba(255, 255, 255, 0.7)",
-    fontSize: 12,
-    fontFamily: "PlusJakartaSans-Regular",
-    letterSpacing: 0.5,
+    color: "rgba(255, 255, 255, 0.6)",
+    fontSize: 13,
+    fontFamily: "PlusJakartaSans-Medium",
+    letterSpacing: 0.8,
   },
 });
