@@ -1,18 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
 import { getThemeColors } from "../themes";
+import { ThemedText as Text } from "./ThemedText";
 
 interface Student {
   id: string;
@@ -119,10 +119,9 @@ export default function ParentTransport() {
         // Transform the data to match our TransportInfo interface
         const pickupRoute = transportData.pickup_route as any;
         const dropoffRoute = transportData.dropoff_route as any;
-        
+
         const transportInfo: TransportInfo = {
-          route_name:
-            pickupRoute?.name || "No Route Assigned",
+          route_name: pickupRoute?.name || "No Route Assigned",
           driver_name: "Driver information not available", // This would require joining with driver tables
           driver_phone: "Contact information not available",
           vehicle_number: "Vehicle information not available",
@@ -155,7 +154,10 @@ export default function ParentTransport() {
       style={[
         styles.studentItem,
         { backgroundColor: colors.card, borderColor: colors.border },
-        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+        selectedStudent === item.id && {
+          backgroundColor: colors.primary,
+          borderColor: colors.primary,
+        },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
@@ -173,31 +175,52 @@ export default function ParentTransport() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: colors.background,
+            justifyContent: "center",
+            alignItems: "center",
+          },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={{ marginTop: 10, color: colors.text }}>Loading transport information...</Text>
+        <Text style={{ marginTop: 10, color: colors.text }}>
+          Loading transport information...
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.header, { color: colors.text }]}>Transport Information</Text>
+      <Text style={[styles.header, { color: colors.text }]}>
+        Transport Information
+      </Text>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="bus-outline" size={60} color={colors.placeholderText} />
+          <Ionicons
+            name="bus-outline"
+            size={60}
+            color={colors.placeholderText}
+          />
           <Text style={[styles.emptyText, { color: colors.text }]}>
             No students linked to your account
           </Text>
-          <Text style={[styles.emptySubtext, { color: colors.placeholderText }]}>
+          <Text
+            style={[styles.emptySubtext, { color: colors.placeholderText }]}
+          >
             Contact school administration to link your children
           </Text>
         </View>
       ) : (
         <>
           <View style={styles.studentSelector}>
-            <Text style={[styles.selectorLabel, { color: colors.text }]}>Select Student:</Text>
+            <Text style={[styles.selectorLabel, { color: colors.text }]}>
+              Select Student:
+            </Text>
             <FlatList
               data={students}
               horizontal
@@ -208,16 +231,31 @@ export default function ParentTransport() {
           </View>
 
           {transportInfo ? (
-            <View style={[styles.transportCard, { backgroundColor: colors.card }]}>
+            <View
+              style={[styles.transportCard, { backgroundColor: colors.card }]}
+            >
               <View style={styles.cardHeader}>
                 <Ionicons name="bus" size={24} color={colors.primary} />
-                <Text style={[styles.cardTitle, { color: colors.text }]}>{transportInfo.route_name}</Text>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  {transportInfo.route_name}
+                </Text>
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="person" size={20} color={colors.placeholderText} />
+                <Ionicons
+                  name="person"
+                  size={20}
+                  color={colors.placeholderText}
+                />
                 <View style={styles.infoTextContainer}>
-                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Driver</Text>
+                  <Text
+                    style={[
+                      styles.infoLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Driver
+                  </Text>
                   <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.driver_name}
                   </Text>
@@ -225,9 +263,20 @@ export default function ParentTransport() {
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="call" size={20} color={colors.placeholderText} />
+                <Ionicons
+                  name="call"
+                  size={20}
+                  color={colors.placeholderText}
+                />
                 <View style={styles.infoTextContainer}>
-                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Contact</Text>
+                  <Text
+                    style={[
+                      styles.infoLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Contact
+                  </Text>
                   <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.driver_phone}
                   </Text>
@@ -237,32 +286,66 @@ export default function ParentTransport() {
               <View style={styles.infoRow}>
                 <Ionicons name="car" size={20} color={colors.placeholderText} />
                 <View style={styles.infoTextContainer}>
-                  <Text style={[styles.infoLabel, { color: colors.placeholderText }]}>Vehicle</Text>
+                  <Text
+                    style={[
+                      styles.infoLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Vehicle
+                  </Text>
                   <Text style={[styles.infoValue, { color: colors.text }]}>
                     {transportInfo.vehicle_number}
                   </Text>
                 </View>
               </View>
 
-              <View style={[styles.timeContainer, { borderTopColor: colors.border }]}>
+              <View
+                style={[
+                  styles.timeContainer,
+                  { borderTopColor: colors.border },
+                ]}
+              >
                 <View style={styles.timeItem}>
-                  <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Pickup</Text>
+                  <Text
+                    style={[
+                      styles.timeLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Pickup
+                  </Text>
                   <Text style={[styles.timeValue, { color: colors.text }]}>
                     {transportInfo.pickup_time}
                   </Text>
-                  <Text style={[styles.location, { color: colors.placeholderText }]}>
+                  <Text
+                    style={[styles.location, { color: colors.placeholderText }]}
+                  >
                     {transportInfo.pickup_location}
                   </Text>
                 </View>
                 <View style={styles.timeSeparator}>
-                  <Ionicons name="arrow-forward" size={20} color={colors.placeholderText} />
+                  <Ionicons
+                    name="arrow-forward"
+                    size={20}
+                    color={colors.placeholderText}
+                  />
                 </View>
                 <View style={styles.timeItem}>
-                  <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Dropoff</Text>
+                  <Text
+                    style={[
+                      styles.timeLabel,
+                      { color: colors.placeholderText },
+                    ]}
+                  >
+                    Dropoff
+                  </Text>
                   <Text style={[styles.timeValue, { color: colors.text }]}>
                     {transportInfo.dropoff_time}
                   </Text>
-                  <Text style={[styles.location, { color: colors.placeholderText }]}>
+                  <Text
+                    style={[styles.location, { color: colors.placeholderText }]}
+                  >
                     {transportInfo.dropoff_location}
                   </Text>
                 </View>
@@ -275,7 +358,12 @@ export default function ParentTransport() {
                 size={40}
                 color={colors.primary}
               />
-              <Text style={[styles.noTransportText, { color: colors.placeholderText }]}>
+              <Text
+                style={[
+                  styles.noTransportText,
+                  { color: colors.placeholderText },
+                ]}
+              >
                 No transport information available for this student
               </Text>
             </View>

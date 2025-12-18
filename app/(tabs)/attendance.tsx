@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -7,12 +8,12 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ThemedText as Text } from "../../components/ThemedText";
 
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -57,6 +58,7 @@ export default function AttendanceScreen() {
     new Set()
   );
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Bulk Selection State
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(
@@ -102,8 +104,13 @@ export default function AttendanceScreen() {
   const selectAll = () => {
     if (selectedStudentIds.size === students.length) {
       setSelectedStudentIds(new Set());
-    } else {
-      setSelectedStudentIds(new Set(students.map((s) => s.student_id)));
+    }
+  };
+
+  const onDateChange = (event: any, date?: Date) => {
+    setShowDatePicker(false);
+    if (date) {
+      setSelectedDate(date.toISOString().split("T")[0]);
     }
   };
 
@@ -489,14 +496,21 @@ export default function AttendanceScreen() {
         <View style={styles.topBarActions}>
           <TouchableOpacity
             style={[styles.iconButton, { backgroundColor: colors.card }]}
-            onPress={() => {
-              /* Calendar logic would go here in full app, for now just input focus or similar */
-            }}
+            onPress={() => setShowDatePicker(true)}
           >
             <Ionicons name="calendar" size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
+
+      {showDatePicker && (
+        <DateTimePicker
+          value={new Date(selectedDate)}
+          mode="date"
+          display="default"
+          onChange={onDateChange}
+        />
+      )}
 
       {/* 2. Visual Stats Deck */}
       {isTeacher && (
@@ -955,8 +969,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 10,
+    paddingTop: 20,
     paddingBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    // fontWeight: "bold",
+    marginBottom: 12,
   },
   screenTitle: {
     fontSize: 28,
@@ -1083,9 +1102,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 16,
   },
-  bigAvatarText: {
+  statValue: {
     fontSize: 20,
-    fontWeight: "bold",
+    // fontWeight: "bold",
+    marginBottom: 4,
   },
   infoColumn: {
     justifyContent: "center",

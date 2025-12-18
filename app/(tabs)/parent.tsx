@@ -1,17 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import {
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { StatusBar, StyleSheet, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import ParentAssessmentHistory from "../../components/ParentAssessmentHistory";
 import ParentAttendance from "../../components/ParentAttendance";
 import ParentDashboard from "../../components/ParentDashboard";
 import ParentTransport from "../../components/ParentTransport";
+import { ThemedText as Text } from "../../components/ThemedText";
 import { useTheme } from "../../contexts/ThemeContext";
 import { getThemeColors } from "../../themes";
 
@@ -123,7 +118,7 @@ export default function ParentScreen() {
                         color:
                           activeTab === item.id ? colors.primary : colors.text,
                       },
-                      activeTab === item.id && { fontWeight: "700" },
+                      // activeTab === item.id && { fontWeight: "700" }, // Handled by fontFamily if I used type, but since I am aliasing Text, I might need to rely on ThemedText handling fontWeight style prop.
                     ]}
                   >
                     {item.label}

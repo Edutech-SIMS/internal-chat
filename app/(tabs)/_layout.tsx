@@ -49,6 +49,11 @@ export default function TabLayout() {
         headerTintColor: "#ffffff",
         headerTitleStyle: {
           fontWeight: "bold",
+          fontFamily: "PlusJakartaSans-Bold",
+        },
+        tabBarLabelStyle: {
+          fontFamily: "PlusJakartaSans-Medium",
+          fontSize: 11,
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: isDarkMode ? "#8e8e93" : "#8e8e93",

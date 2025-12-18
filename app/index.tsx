@@ -10,11 +10,13 @@ import {
   Image,
   Platform,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
+import { ThemedText } from "../components/ThemedText";
 import { useAuth } from "../contexts/AuthContext";
 import { usePushToken } from "../contexts/PushTokenContext";
+
+const AnimatedThemedText = Animated.createAnimatedComponent(ThemedText);
 
 const { width, height } = Dimensions.get("window");
 
@@ -142,38 +144,38 @@ export default function Splash() {
         >
           {/* Floating Decorative Icons */}
           <View style={styles.floatingIconsContainer}>
-            <Animated.Text
+            <AnimatedThemedText
               style={[
                 styles.floatingIcon,
                 { top: "15%", left: "10%", opacity: fadeAnim },
               ]}
             >
               📚
-            </Animated.Text>
-            <Animated.Text
+            </AnimatedThemedText>
+            <AnimatedThemedText
               style={[
                 styles.floatingIcon,
                 { top: "25%", right: "15%", opacity: fadeAnim },
               ]}
             >
               ✏️
-            </Animated.Text>
-            <Animated.Text
+            </AnimatedThemedText>
+            <AnimatedThemedText
               style={[
                 styles.floatingIcon,
                 { bottom: "30%", left: "15%", opacity: fadeAnim },
               ]}
             >
               🎓
-            </Animated.Text>
-            <Animated.Text
+            </AnimatedThemedText>
+            <AnimatedThemedText
               style={[
                 styles.floatingIcon,
                 { bottom: "20%", right: "10%", opacity: fadeAnim },
               ]}
             >
               🔬
-            </Animated.Text>
+            </AnimatedThemedText>
           </View>
 
           {/* Main Content */}
@@ -196,20 +198,26 @@ export default function Splash() {
             </View>
 
             {/* App Name */}
-            <Text style={styles.appName}>MindSync</Text>
-            <Text style={styles.tagline}>School Management System</Text>
+            <ThemedText type="title" style={styles.appName}>
+              MindSync
+            </ThemedText>
+            <ThemedText style={styles.tagline}>
+              School Management System
+            </ThemedText>
 
             {/* Loading Indicator */}
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="white" />
-              <Text style={styles.loadingText}>Loading...</Text>
+              <ThemedText style={styles.loadingText}>Loading...</ThemedText>
             </View>
           </Animated.View>
 
           {/* Bottom Decoration */}
           <View style={styles.bottomDecoration}>
             <View style={styles.decorativeLine} />
-            <Text style={styles.poweredBy}>Powered by MindSync</Text>
+            <ThemedText style={styles.poweredBy}>
+              Powered by MindSync
+            </ThemedText>
           </View>
         </LinearGradient>
       </View>
@@ -280,8 +288,8 @@ const styles = StyleSheet.create({
   },
   appName: {
     fontSize: 48,
-    fontWeight: "800",
     color: "#FFFFFF",
+    // fontFamily handled by type="title"
     letterSpacing: 2,
     textShadowColor: "rgba(0, 0, 0, 0.3)",
     textShadowOffset: { width: 0, height: 3 },
@@ -291,6 +299,7 @@ const styles = StyleSheet.create({
   tagline: {
     fontSize: 16,
     color: "rgba(255, 255, 255, 0.95)",
+    // fontFamily: "PlusJakartaSans-Regular", // Handled by default
     letterSpacing: 1,
     marginBottom: 40,
   },
@@ -301,6 +310,7 @@ const styles = StyleSheet.create({
   loadingText: {
     color: "rgba(255, 255, 255, 0.9)",
     fontSize: 14,
+    fontFamily: "PlusJakartaSans-Regular",
     marginTop: 12,
     letterSpacing: 0.5,
   },
@@ -319,6 +329,7 @@ const styles = StyleSheet.create({
   poweredBy: {
     color: "rgba(255, 255, 255, 0.7)",
     fontSize: 12,
+    fontFamily: "PlusJakartaSans-Regular",
     letterSpacing: 0.5,
   },
 });

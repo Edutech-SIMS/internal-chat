@@ -10,11 +10,11 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { ThemedText as Text } from "../../components/ThemedText";
 import { useAuth } from "../../contexts/AuthContext";
 import { usePushToken } from "../../contexts/PushTokenContext";
 

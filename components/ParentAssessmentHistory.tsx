@@ -1,20 +1,19 @@
-
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
 import { getThemeColors } from "../themes";
+import { ThemedText as Text } from "./ThemedText";
 
 interface Student {
   id: string;
@@ -197,7 +196,10 @@ export default function ParentAssessmentHistory() {
       style={[
         styles.studentItem,
         { backgroundColor: colors.card, borderColor: colors.border },
-        selectedStudent === item.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+        selectedStudent === item.id && {
+          backgroundColor: colors.primary,
+          borderColor: colors.primary,
+        },
       ]}
       onPress={() => handleStudentSelect(item.id)}
     >
@@ -216,7 +218,9 @@ export default function ParentAssessmentHistory() {
   const renderAssessment = ({ item }: { item: Assessment }) => (
     <View style={[styles.assessmentItem, { backgroundColor: colors.card }]}>
       <View style={styles.assessmentHeader}>
-        <Text style={[styles.subjectName, { color: colors.text }]}>{item.subject}</Text>
+        <Text style={[styles.subjectName, { color: colors.text }]}>
+          {item.subject}
+        </Text>
         <Text style={styles.assessmentType}>{item.type}</Text>
       </View>
       <View style={styles.assessmentDetails}>
@@ -228,7 +232,9 @@ export default function ParentAssessmentHistory() {
         </Text>
       </View>
       <View style={styles.assessmentFooter}>
-        <Text style={[styles.teacher, { color: colors.placeholderText }]}>By {item.teacher}</Text>
+        <Text style={[styles.teacher, { color: colors.placeholderText }]}>
+          By {item.teacher}
+        </Text>
         <Text style={[styles.date, { color: colors.placeholderText }]}>
           {new Date(item.date).toLocaleDateString()}
         </Text>
@@ -238,8 +244,12 @@ export default function ParentAssessmentHistory() {
 
   const renderSubjectAverage = ({ item }: { item: SubjectAverage }) => (
     <View style={[styles.averageItem, { backgroundColor: colors.card }]}>
-      <Text style={[styles.subjectAverageName, { color: colors.text }]}>{item.subject}</Text>
-      <Text style={[styles.averageValue, { color: colors.primary }]}>{item.average}%</Text>
+      <Text style={[styles.subjectAverageName, { color: colors.text }]}>
+        {item.subject}
+      </Text>
+      <Text style={[styles.averageValue, { color: colors.primary }]}>
+        {item.average}%
+      </Text>
       <Text style={[styles.averageGrade, getGradeStyle(item.grade)]}>
         {item.grade}
       </Text>
@@ -255,31 +265,52 @@ export default function ParentAssessmentHistory() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: colors.background,
+            justifyContent: "center",
+            alignItems: "center",
+          },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={{ marginTop: 10, color: colors.text }}>Loading assessment history...</Text>
+        <Text style={{ marginTop: 10, color: colors.text }}>
+          Loading assessment history...
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.header, { color: colors.text }]}>Assessment History</Text>
+      <Text style={[styles.header, { color: colors.text }]}>
+        Assessment History
+      </Text>
 
       {students.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="clipboard-outline" size={60} color={colors.placeholderText} />
+          <Ionicons
+            name="clipboard-outline"
+            size={60}
+            color={colors.placeholderText}
+          />
           <Text style={[styles.emptyText, { color: colors.text }]}>
             No students linked to your account
           </Text>
-          <Text style={[styles.emptySubtext, { color: colors.placeholderText }]}>
+          <Text
+            style={[styles.emptySubtext, { color: colors.placeholderText }]}
+          >
             Contact school administration to link your children
           </Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           <View style={styles.studentSelector}>
-            <Text style={[styles.selectorLabel, { color: colors.text }]}>Select Student:</Text>
+            <Text style={[styles.selectorLabel, { color: colors.text }]}>
+              Select Student:
+            </Text>
             <FlatList
               data={students}
               horizontal
@@ -289,7 +320,12 @@ export default function ParentAssessmentHistory() {
             />
           </View>
 
-          <View style={[styles.timeRangeSelector, { backgroundColor: isDarkMode ? colors.card : "#e9ecef" }]}>
+          <View
+            style={[
+              styles.timeRangeSelector,
+              { backgroundColor: isDarkMode ? colors.card : "#e9ecef" },
+            ]}
+          >
             <TouchableOpacity
               style={[
                 styles.timeButton,
@@ -301,7 +337,10 @@ export default function ParentAssessmentHistory() {
                 style={[
                   styles.timeButtonText,
                   { color: colors.placeholderText },
-                  timeRange === "term" && { color: colors.primary, fontWeight: "600" },
+                  timeRange === "term" && {
+                    color: colors.primary,
+                    fontWeight: "600",
+                  },
                 ]}
               >
                 This Term
@@ -310,7 +349,9 @@ export default function ParentAssessmentHistory() {
             <TouchableOpacity
               style={[
                 styles.timeButton,
-                timeRange === "session" && { backgroundColor: colors.background },
+                timeRange === "session" && {
+                  backgroundColor: colors.background,
+                },
               ]}
               onPress={() => setTimeRange("session")}
             >
@@ -318,7 +359,10 @@ export default function ParentAssessmentHistory() {
                 style={[
                   styles.timeButtonText,
                   { color: colors.placeholderText },
-                  timeRange === "session" && { color: colors.primary, fontWeight: "600" },
+                  timeRange === "session" && {
+                    color: colors.primary,
+                    fontWeight: "600",
+                  },
                 ]}
               >
                 This Session
@@ -328,7 +372,9 @@ export default function ParentAssessmentHistory() {
 
           {subjectAverages.length > 0 && (
             <View style={styles.averagesSection}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Subject Averages</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                Subject Averages
+              </Text>
               <FlatList
                 data={subjectAverages}
                 keyExtractor={(item) => item.subject}
@@ -341,7 +387,9 @@ export default function ParentAssessmentHistory() {
 
           {assessments.length > 0 ? (
             <View style={styles.assessmentsSection}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Assessments</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                Recent Assessments
+              </Text>
               <FlatList
                 data={assessments}
                 keyExtractor={(item) => item.id}
@@ -356,7 +404,12 @@ export default function ParentAssessmentHistory() {
                 size={40}
                 color={colors.primary}
               />
-              <Text style={[styles.noAssessmentsText, { color: colors.placeholderText }]}>
+              <Text
+                style={[
+                  styles.noAssessmentsText,
+                  { color: colors.placeholderText },
+                ]}
+              >
                 No assessment records found for this student
               </Text>
             </View>

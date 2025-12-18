@@ -8,12 +8,12 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ThemedText as Text } from "../../components/ThemedText";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   loadingText: { marginTop: 10, fontSize: 16 },
-  header: { alignItems: "center", marginBottom: 30, paddingTop: 20 },
+  header: { alignItems: "center", marginBottom: 30, paddingTop: 30 },
   avatarContainer: {
     width: 80,
     height: 80,

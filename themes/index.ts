@@ -24,6 +24,13 @@ export const darkColors = {
   separator: "#3A3A3C",
 };
 
+export const typography = {
+  regular: "PlusJakartaDisplay_400Regular",
+  medium: "PlusJakartaDisplay_500Medium",
+  semiBold: "PlusJakartaDisplay_600SemiBold",
+  bold: "PlusJakartaDisplay_700Bold",
+};
+
 export const getThemeColors = (isDarkMode: boolean) => {
   return isDarkMode ? darkColors : lightColors;
 };

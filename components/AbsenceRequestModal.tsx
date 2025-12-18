@@ -9,11 +9,11 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { ThemedText as Text } from "../components/ThemedText";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
@@ -202,7 +202,6 @@ export default function AbsenceRequestModal({
                 style={[
                   styles.studentOption,
                   {
-                    borderColor: colors.border,
                     backgroundColor:
                       selectedStudentId === student.student_id
                         ? colors.primary + "20"

@@ -8,13 +8,14 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { EventRegister } from "react-native-event-listeners";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { getThemeColors } from "themes";
+import { ThemedText as Text } from "../../components/ThemedText";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { supabase } from "../../lib/supabase";
@@ -40,6 +41,7 @@ export default function ChatsScreen() {
   const router = useRouter();
   const { user, profile } = useAuth();
   const { isDarkMode } = useTheme();
+  const colors = getThemeColors(isDarkMode);
 
   // Run once on mount
   useEffect(() => {
@@ -259,7 +261,7 @@ export default function ChatsScreen() {
         style={[styles.safeArea, isDarkMode && styles.darkSafeArea]}
       >
         <View style={styles.loadingContainer}>
-          <View style={styles.spinner} />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.loadingText, isDarkMode && styles.darkText]}>
             Loading conversations...
           </Text>
@@ -615,7 +617,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#121212",
   },
   header: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    paddingTop: 24,
     backgroundColor: "#f8f9fa",
     borderBottomWidth: 1,
     borderBottomColor: "#e0e0e0",

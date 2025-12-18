@@ -5,7 +5,6 @@ import {
   Alert,
   FlatList,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -14,6 +13,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { supabase } from "../lib/supabase";
 import { getThemeColors } from "../themes";
 import AbsenceRequestModal from "./AbsenceRequestModal";
+import { ThemedText as Text } from "./ThemedText";
 
 interface Student {
   id: string;
