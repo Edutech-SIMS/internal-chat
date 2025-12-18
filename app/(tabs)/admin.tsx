@@ -376,39 +376,70 @@ export default function AdminScreen() {
           keyExtractor={(item) => item.id}
           renderItem={({ item: user }) => (
             <TouchableOpacity
-              style={[styles.activityItem, { backgroundColor: colors.card }]}
+              style={[
+                styles.activityItem,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderWidth: 1,
+                },
+              ]}
               onPress={() => handleUserPress(user)}
               activeOpacity={0.7}
             >
-              <View
-                style={[
-                  styles.activityIcon,
-                  { backgroundColor: colors.primary + "15" },
-                ]}
-              >
-                <Text style={{ color: colors.primary, fontWeight: "bold" }}>
-                  {user.full_name?.[0]?.toUpperCase()}
-                </Text>
+              <View style={styles.activityIcon}>
+                {user.avatar_url ? (
+                  <Image
+                    source={{ uri: user.avatar_url }}
+                    style={styles.listAvatar}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.avatarPlaceholder,
+                      { backgroundColor: colors.primary + "10" },
+                    ]}
+                  >
+                    <Text
+                      style={[styles.avatarLetter, { color: colors.primary }]}
+                    >
+                      {user.full_name?.[0]?.toUpperCase() || "?"}
+                    </Text>
+                  </View>
+                )}
               </View>
               <View style={styles.activityContent}>
                 <Text style={[styles.activityTitle, { color: colors.text }]}>
                   {user.full_name}
                 </Text>
-                <Text
-                  style={[
-                    styles.activitySubtitle,
-                    { color: colors.placeholderText },
-                  ]}
-                >
-                  {user.user_roles?.map((r: any) => r.role).join(", ") ||
-                    "No Role"}
-                </Text>
+                <View style={styles.compactRolesContainer}>
+                  {user.user_roles?.map((r: any, idx: number) => (
+                    <View
+                      key={idx}
+                      style={[
+                        styles.compactRoleBadge,
+                        { backgroundColor: colors.primary + "15" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.compactRoleText,
+                          { color: colors.primary },
+                        ]}
+                      >
+                        {r.role}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={colors.placeholderText}
-              />
+              <View style={styles.activityAction}>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={colors.placeholderText}
+                />
+              </View>
             </TouchableOpacity>
           )}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -444,13 +475,16 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   greeting: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -1,
   },
   schoolName: {
-    fontSize: 16,
-    opacity: 0.7,
-    marginTop: 4,
+    fontSize: 15,
+    opacity: 0.5,
+    marginTop: 2,
+    fontWeight: "500",
+    letterSpacing: -0.2,
   },
   profileButton: {
     width: 44,
@@ -481,38 +515,81 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
+    alignItems: "flex-end",
+    marginBottom: 20,
+    paddingHorizontal: 4,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.5,
   },
   activityItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 20,
     marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 3,
   },
   activityIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    marginRight: 14,
+  },
+  listAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+  },
+  avatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+  },
+  avatarLetter: {
+    fontSize: 16,
+    fontWeight: "bold",
   },
   activityContent: {
     flex: 1,
+    justifyContent: "center",
   },
   activityTitle: {
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   activitySubtitle: {
     fontSize: 12,
     marginTop: 2,
+    opacity: 0.7,
+  },
+  activityAction: {
+    paddingLeft: 8,
+    opacity: 0.5,
+  },
+  compactRolesContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
+    gap: 4,
+  },
+  compactRoleBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  compactRoleText: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "lowercase",
+    letterSpacing: 0.2,
   },
   modalHeader: {
     flexDirection: "row",
@@ -607,10 +684,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    height: 50,
-    borderRadius: 12,
+    height: 54,
+    borderRadius: 18,
     borderWidth: 1,
-    marginBottom: 20,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 10,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
