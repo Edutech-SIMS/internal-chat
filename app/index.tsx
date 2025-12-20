@@ -230,7 +230,7 @@ export default function Splash() {
     if (hasRole("parent")) {
       return <Redirect href="/parent" />;
     }
-    if (hasRole("admin") || hasRole("superadmin")) {
+    if (hasRole("admin")) {
       return <Redirect href="/admin" />;
     }
     return <Redirect href="/chats" />;

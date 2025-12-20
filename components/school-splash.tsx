@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ThemedText } from "../components/ThemedText";
+import { ThemedText } from "./ThemedText";
 
 import { useAuth } from "../contexts/AuthContext";
 
@@ -68,7 +68,7 @@ export default function SchoolSplash() {
           router.replace("/teacher");
         } else if (hasRole("parent")) {
           router.replace("/parent");
-        } else if (hasRole("admin") || hasRole("superadmin")) {
+        } else if (hasRole("admin")) {
           router.replace("/admin");
         } else {
           router.replace("/chats");
