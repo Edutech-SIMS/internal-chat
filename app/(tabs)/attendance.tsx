@@ -207,6 +207,26 @@ export default function AttendanceScreen() {
     setLocationStatus(null);
 
     try {
+      // 0. Ensure staffRecord is available
+      let currentStaffRecord = staffRecord;
+      if (!currentStaffRecord) {
+        const { data: sRecord, error: sError } = await supabase
+          .from("staff")
+          .select("*")
+          .eq("user_id", user?.id)
+          .eq("school_id", profile?.school_id)
+          .maybeSingle();
+
+        if (sError) throw sError;
+        if (!sRecord) {
+          Alert.alert("Error", "No staff record found for your account.");
+          setIsMarking(false);
+          return;
+        }
+        currentStaffRecord = sRecord;
+        setStaffRecord(sRecord);
+      }
+
       // 1. Check Geofence
       const radius = school.settings?.attendance?.geofence_radius || 200;
       const geofenceResult = await checkGeofence(
@@ -244,7 +264,7 @@ export default function AttendanceScreen() {
           .from("attendance")
           .upsert({
             school_id: profile.school_id,
-            staff_id: staffRecord.id,
+            staff_id: currentStaffRecord.id,
             date: dateStr,
             status: "present",
             check_in_time: timeStr,
@@ -842,6 +862,18 @@ export default function AttendanceScreen() {
                     Staff ID: {staffRecord?.employee_id || "N/A"}
                   </Text>
                 </View>
+              </View>
+
+              <View style={[styles.dateDisplaySection, { backgroundColor: colors.primary + "05" }]}>
+                <Ionicons name="calendar" size={18} color={colors.primary} />
+                <Text style={[styles.dateDisplayText, { color: colors.text }]}>
+                  Recording for: <Text style={{ fontWeight: '700' }}>{new Date(selectedDate).toLocaleDateString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}</Text>
+                </Text>
               </View>
 
               <View style={[styles.divider, { backgroundColor: colors.border }]} />
@@ -1628,6 +1660,19 @@ const styles = StyleSheet.create({
   myRole: {
     fontSize: 14,
     marginTop: 2,
+  },
+  dateDisplaySection: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    gap: 8,
+  },
+  dateDisplayText: {
+    fontSize: 14,
   },
   divider: {
     height: 1,
