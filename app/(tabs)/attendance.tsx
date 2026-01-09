@@ -669,9 +669,12 @@ export default function AttendanceScreen() {
           <Text
             style={[styles.screenSubtitle, { color: colors.placeholderText }]}
           >
-            {selectedDate === new Date().toISOString().split("T")[0]
-              ? "Today"
-              : selectedDate}
+            Recording for: {new Date(selectedDate).toLocaleDateString("en-US", {
+              weekday: "long",
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
           </Text>
         </View>
         <View style={styles.topBarActions}>
@@ -738,6 +741,20 @@ export default function AttendanceScreen() {
       )}
 
       {/* 2. Visual Stats Deck */}
+      {isTeacher && viewMode === "students" && (
+        <View style={[styles.studentDateBanner, { backgroundColor: colors.primary + "05" }]}>
+          <Ionicons name="calendar-outline" size={16} color={colors.primary} />
+          <Text style={[styles.studentDateText, { color: colors.text }]}>
+            Attendance for: <Text style={{ fontWeight: '700' }}>{new Date(selectedDate).toLocaleDateString("en-US", {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}</Text>
+          </Text>
+        </View>
+      )}
+
       {isTeacher && viewMode === "students" && (
         <View style={[styles.statsDeck, { backgroundColor: colors.card }]}>
           <View style={styles.progressCircleContainer}>
@@ -1672,6 +1689,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   dateDisplayText: {
+    fontSize: 14,
+  },
+  studentDateBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.03)",
+  },
+  studentDateText: {
     fontSize: 14,
   },
   divider: {
