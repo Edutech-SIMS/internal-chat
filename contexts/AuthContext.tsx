@@ -10,6 +10,9 @@ interface School {
   updated_at: string;
   theme_color: string;
   logo_url: string;
+  latitude: number | null;
+  longitude: number | null;
+  settings: any;
 }
 
 interface UserRole {
@@ -59,13 +62,13 @@ const AuthContext = createContext<AuthContextType>({
   school: null, // default school value
   isAdmin: false,
   schoolId: null,
-  refreshProfile: async () => {},
-  refreshSchool: async () => {}, // default refreshSchool function
-  signIn: async () => {},
-  signUp: async () => {},
-  signOut: async () => {},
-  resetPassword: async () => {},
-  updatePassword: async () => {},
+  refreshProfile: async () => { },
+  refreshSchool: async () => { }, // default refreshSchool function
+  signIn: async () => { },
+  signUp: async () => { },
+  signOut: async () => { },
+  resetPassword: async () => { },
+  updatePassword: async () => { },
   hasRole: () => false,
 });
 
@@ -185,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const { data: schoolData, error: schoolError } = await supabase
         .from("schools")
         .select(
-          "school_id, name, created_at, updated_at, theme_color, logo_url"
+          "school_id, name, created_at, updated_at, theme_color, logo_url, latitude, longitude, settings"
         )
         .eq("school_id", schoolId)
         .single();
@@ -271,44 +274,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       // However, fetchProfile already fetched it. To avoid double fetching, we can just return what we have if needed,
       // but the context consumers should rely on the context state, not the return value of signIn.
       // But for push token registration we need the profile data.
-      
+
       // Let's re-fetch just for the local logic (it will be fast/cached or we can just use the logic from fetchProfile here if we want to be super optimized, 
       // but calling fetchProfile is cleaner code. To get the data for push token, we can just query it again or refactor fetchProfile to return data.)
-      
+
       // Refactoring fetchProfile to return data would be best, but to minimize changes let's just query what we need for push token if it's missing.
       // Actually, let's just trust fetchProfile did its job.
-      
+
       // Push token registration
       if (expoPushToken) {
-         // We need the profile data we just fetched. 
-         // Let's just do a quick check or assume fetchProfile succeeded.
-         // Ideally fetchProfile should return the data.
-         
-         // Let's modify fetchProfile above to return the data? 
-         // No, let's just do the push token logic inside fetchProfile? No, that's side effect.
-         
-         // For now, let's just fetch the minimal info needed for push token if we have a token
-         const { data: minimalProfile } = await supabase
-            .from("profiles")
-            .select("id, school_id")
-            .eq("user_id", authData.user.id)
-            .single();
-            
-         if (minimalProfile?.id && minimalProfile?.school_id) {
-            try {
-              await supabase.from("user_push_tokens").upsert(
-                {
-                  user_id: minimalProfile.id,
-                  school_id: minimalProfile.school_id,
-                  token: expoPushToken,
-                  device_platform: Platform.OS,
-                },
-                { onConflict: "user_id,school_id,token" }
-              );
-            } catch (err) {
-               console.error("Failed to save push token", err);
-            }
-         }
+        // We need the profile data we just fetched. 
+        // Let's just do a quick check or assume fetchProfile succeeded.
+        // Ideally fetchProfile should return the data.
+
+        // Let's modify fetchProfile above to return the data? 
+        // No, let's just do the push token logic inside fetchProfile? No, that's side effect.
+
+        // For now, let's just fetch the minimal info needed for push token if we have a token
+        const { data: minimalProfile } = await supabase
+          .from("profiles")
+          .select("id, school_id")
+          .eq("user_id", authData.user.id)
+          .single();
+
+        if (minimalProfile?.id && minimalProfile?.school_id) {
+          try {
+            await supabase.from("user_push_tokens").upsert(
+              {
+                user_id: minimalProfile.id,
+                school_id: minimalProfile.school_id,
+                token: expoPushToken,
+                device_platform: Platform.OS,
+              },
+              { onConflict: "user_id,school_id,token" }
+            );
+          } catch (err) {
+            console.error("Failed to save push token", err);
+          }
+        }
       }
 
       return {

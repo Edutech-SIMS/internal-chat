@@ -17,6 +17,7 @@ import { ThemedText as Text } from "../../components/ThemedText";
 
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
+import { checkGeofence } from "../../lib/location";
 import { supabase } from "../../lib/supabase";
 import { getThemeColors } from "../../themes";
 
@@ -39,7 +40,7 @@ interface ClassAssignment {
 }
 
 export default function AttendanceScreen() {
-  const { hasRole, user, profile } = useAuth();
+  const { hasRole, user, profile, school } = useAuth();
   const { isDarkMode } = useTheme();
   const colors = getThemeColors(isDarkMode);
 
@@ -64,6 +65,17 @@ export default function AttendanceScreen() {
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(
     new Set()
   );
+
+  // New state for personal attendance
+  const [viewMode, setViewMode] = useState<"students" | "mine">("students");
+  const [myAttendanceRecord, setMyAttendanceRecord] = useState<any>(null);
+  const [staffRecord, setStaffRecord] = useState<any>(null);
+  const [loadingMyAttendance, setLoadingMyAttendance] = useState(false);
+  const [isMarking, setIsMarking] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<{
+    distance?: number;
+    error?: string;
+  } | null>(null);
   const selectionMode = selectedStudentIds.size > 0;
 
   const toggleNote = (studentId: string) => {
@@ -125,11 +137,154 @@ export default function AttendanceScreen() {
 
   useEffect(() => {
     if (isTeacher) {
-      loadTeacherAttendance();
+      if (viewMode === "students") {
+        loadTeacherAttendance();
+      } else {
+        loadMyAttendance();
+      }
     } else if (isParent) {
       loadParentAttendance();
     }
-  }, [isTeacher, isParent, selectedDate, selectedClassId]);
+  }, [isTeacher, isParent, selectedDate, selectedClassId, viewMode]);
+
+  const loadMyAttendance = async (isRefreshing = false) => {
+    try {
+      if (!isRefreshing) setLoadingMyAttendance(true);
+
+      // Step 1: Get/Ensure staff record
+      let currentStaffRecord = staffRecord;
+      if (!currentStaffRecord) {
+        const { data: sRecord, error: sError } = await supabase
+          .from("staff")
+          .select("*")
+          .eq("user_id", user?.id)
+          .eq("school_id", profile?.school_id)
+          .maybeSingle();
+
+        if (sError) throw sError;
+        currentStaffRecord = sRecord;
+        setStaffRecord(sRecord);
+      }
+
+      if (!currentStaffRecord) {
+        setMyAttendanceRecord(null);
+        return;
+      }
+
+      // Step 2: Fetch attendance for this staff member on selected date
+      const { data: attendanceData, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("staff_id", currentStaffRecord.id)
+        .eq("date", selectedDate)
+        .eq("school_id", profile?.school_id)
+        .maybeSingle();
+
+      if (attendanceError) throw attendanceError;
+      setMyAttendanceRecord(attendanceData);
+    } catch (error) {
+      console.error("Error loading personal attendance:", error);
+    } finally {
+      setLoadingMyAttendance(false);
+    }
+  };
+
+  const handleClockAction = async (type: "in" | "out") => {
+    if (!school || !user || !profile) {
+      Alert.alert("Error", "Missing school or user information");
+      return;
+    }
+
+    if (school.latitude === null || school.longitude === null) {
+      Alert.alert(
+        "Location Error",
+        "School location is not configured. Please contact administration."
+      );
+      return;
+    }
+
+    setIsMarking(true);
+    setLocationStatus(null);
+
+    try {
+      // 1. Check Geofence
+      const radius = school.settings?.attendance?.geofence_radius || 200;
+      const geofenceResult = await checkGeofence(
+        school.latitude,
+        school.longitude,
+        radius
+      );
+
+      setLocationStatus({
+        distance: geofenceResult.distance,
+        error: geofenceResult.error,
+      });
+
+      if (geofenceResult.error) {
+        Alert.alert("Location Error", geofenceResult.error);
+        return;
+      }
+
+      if (!geofenceResult.isWithinFence) {
+        Alert.alert(
+          "Out of Range",
+          `You are ${geofenceResult.distance}m away. You must be within ${radius}m of the school to clock ${type}.`
+        );
+        return;
+      }
+
+      // 2. Perform Attendance Action
+      const now = new Date();
+      const timeStr = now.toTimeString().split(" ")[0]; // HH:MM:SS
+      const dateStr = now.toISOString().split("T")[0];
+
+      if (type === "in") {
+        // Upsert for Clock In
+        const { data, error } = await supabase
+          .from("attendance")
+          .upsert({
+            school_id: profile.school_id,
+            staff_id: staffRecord.id,
+            date: dateStr,
+            status: "present",
+            check_in_time: timeStr,
+            marked_by: user.id,
+          }, {
+            onConflict: "school_id,staff_id,date"
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        setMyAttendanceRecord(data);
+        Alert.alert("Success", "Clocked in successfully!");
+      } else {
+        // Update for Clock Out
+        if (!myAttendanceRecord?.id) {
+          Alert.alert("Error", "No clock-in record found for today.");
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("attendance")
+          .update({
+            check_out_time: timeStr,
+          })
+          .eq("id", myAttendanceRecord.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        setMyAttendanceRecord(data);
+        Alert.alert("Success", "Clocked out successfully!");
+      }
+    } catch (error: any) {
+      console.error(`Error during clock ${type}:`, error);
+      Alert.alert("Error", error.message || `Failed to clock ${type}`);
+    } finally {
+      setIsMarking(false);
+    }
+  };
 
   // ... (loadParentAttendance and loadTeacherAttendance are above or below)
 
@@ -357,7 +512,11 @@ export default function AttendanceScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     if (isTeacher) {
-      await loadTeacherAttendance(true);
+      if (viewMode === "students") {
+        await loadTeacherAttendance(true);
+      } else {
+        await loadMyAttendance(true);
+      }
     } else if (isParent) {
       await loadParentAttendance(true);
     }
@@ -505,6 +664,50 @@ export default function AttendanceScreen() {
         </View>
       </View>
 
+      {/* View Toggle for Teachers */}
+      {isTeacher && (
+        <View style={styles.segmentedControlContainer}>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              viewMode === "students" && {
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+              },
+            ]}
+            onPress={() => setViewMode("students")}
+          >
+            <Text
+              style={[
+                styles.segmentButtonText,
+                { color: viewMode === "students" ? "white" : colors.text },
+              ]}
+            >
+              Students
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              viewMode === "mine" && {
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+              },
+            ]}
+            onPress={() => setViewMode("mine")}
+          >
+            <Text
+              style={[
+                styles.segmentButtonText,
+                { color: viewMode === "mine" ? "white" : colors.text },
+              ]}
+            >
+              My Attendance
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {showDatePicker && (
         <DateTimePicker
           value={new Date(selectedDate)}
@@ -515,7 +718,7 @@ export default function AttendanceScreen() {
       )}
 
       {/* 2. Visual Stats Deck */}
-      {isTeacher && (
+      {isTeacher && viewMode === "students" && (
         <View style={[styles.statsDeck, { backgroundColor: colors.card }]}>
           <View style={styles.progressCircleContainer}>
             {/* Simple Circular Progress Simulation using Border */}
@@ -563,7 +766,7 @@ export default function AttendanceScreen() {
       )}
 
       {/* 3. Class Selector (Horizontal Scroller) */}
-      {isTeacher && classAssignments.length > 1 && (
+      {isTeacher && viewMode === "students" && classAssignments.length > 1 && (
         <View style={styles.classSelectorContainer}>
           <ScrollView
             horizontal
@@ -580,10 +783,10 @@ export default function AttendanceScreen() {
                     isSelected
                       ? { backgroundColor: colors.primary }
                       : {
-                          backgroundColor: colors.card,
-                          borderWidth: 1,
-                          borderColor: colors.border,
-                        },
+                        backgroundColor: colors.card,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                      },
                   ]}
                   onPress={() => setSelectedClassId(assignment.class_id)}
                 >
@@ -610,19 +813,151 @@ export default function AttendanceScreen() {
         }
         contentContainerStyle={styles.scrollContent}
       >
-        {loading ? (
+        {loading || loadingMyAttendance ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={[styles.loadingText, { color: colors.text }]}>
               Loading attendance...
             </Text>
           </View>
-        ) : isTeacher && !classInfo ? (
+        ) : isTeacher && viewMode === "students" && !classInfo ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="school-outline" size={60} color={colors.primary} />
             <Text style={[styles.emptyText, { color: colors.text }]}>
               You don't have a class assignment yet.
             </Text>
+          </View>
+        ) : isTeacher && viewMode === "mine" ? (
+          <View style={styles.myAttendanceContainer}>
+            <View style={[styles.myAttendanceCard, { backgroundColor: colors.card }]}>
+              <View style={styles.myAttendanceHeader}>
+                <View style={[styles.myAvatarLarge, { backgroundColor: colors.primary + "20" }]}>
+                  <Text style={[styles.myAvatarText, { color: colors.primary }]}>
+                    {profile?.full_name?.[0]?.toUpperCase()}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={[styles.myName, { color: colors.text }]}>{profile?.full_name}</Text>
+                  <Text style={[styles.myRole, { color: colors.placeholderText }]}>
+                    Staff ID: {staffRecord?.employee_id || "N/A"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+              <View style={styles.myStatusSection}>
+                <Text style={[styles.myStatusLabel, { color: colors.placeholderText }]}>
+                  Attendance Status
+                </Text>
+                {myAttendanceRecord ? (
+                  <View style={[styles.myStatusBadge, { backgroundColor: getStatusColor(myAttendanceRecord.status) + "20" }]}>
+                    <Ionicons
+                      name={myAttendanceRecord.status === 'present' ? 'checkmark-circle' : 'alert-circle'}
+                      size={24}
+                      color={getStatusColor(myAttendanceRecord.status)}
+                    />
+                    <Text style={[styles.myStatusText, { color: getStatusColor(myAttendanceRecord.status) }]}>
+                      {myAttendanceRecord.status.toUpperCase()}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={[styles.myStatusBadge, { backgroundColor: colors.border + "50" }]}>
+                    <Ionicons name="help-circle-outline" size={24} color={colors.placeholderText} />
+                    <Text style={[styles.myStatusText, { color: colors.placeholderText }]}>
+                      UNMARKED
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {(myAttendanceRecord?.check_in_time || myAttendanceRecord?.check_out_time) && (
+                <View style={styles.timeSection}>
+                  <View style={styles.timeColumn}>
+                    <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Check In</Text>
+                    <Text style={[styles.timeValue, { color: colors.text }]}>
+                      {myAttendanceRecord.check_in_time || "--:--"}
+                    </Text>
+                  </View>
+                  <View style={styles.timeColumn}>
+                    <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Check Out</Text>
+                    <Text style={[styles.timeValue, { color: colors.text }]}>
+                      {myAttendanceRecord.check_out_time || "--:--"}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {myAttendanceRecord?.notes && (
+                <View style={styles.myNotesSection}>
+                  <Text style={[styles.timeLabel, { color: colors.placeholderText }]}>Notes</Text>
+                  <Text style={[styles.myNotesText, { color: colors.text }]}>
+                    {myAttendanceRecord.notes}
+                  </Text>
+                </View>
+              )}
+
+              {/* Attendance Actions */}
+              <View style={styles.actionContainer}>
+                {selectedDate === new Date().toISOString().split("T")[0] && (
+                  <View style={styles.clockButtonsContainer}>
+                    {!myAttendanceRecord?.check_in_time ? (
+                      <TouchableOpacity
+                        style={[styles.clockButton, { backgroundColor: "#10B981" }]}
+                        onPress={() => handleClockAction("in")}
+                        disabled={isMarking}
+                      >
+                        {isMarking ? (
+                          <ActivityIndicator color="white" />
+                        ) : (
+                          <>
+                            <Ionicons name="log-in-outline" size={24} color="white" />
+                            <Text style={styles.clockButtonText}>Clock In</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    ) : !myAttendanceRecord?.check_out_time ? (
+                      <TouchableOpacity
+                        style={[styles.clockButton, { backgroundColor: "#EF4444" }]}
+                        onPress={() => handleClockAction("out")}
+                        disabled={isMarking}
+                      >
+                        {isMarking ? (
+                          <ActivityIndicator color="white" />
+                        ) : (
+                          <>
+                            <Ionicons name="log-out-outline" size={24} color="white" />
+                            <Text style={styles.clockButtonText}>Clock Out</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={[styles.statusBanner, { backgroundColor: colors.primary + "15" }]}>
+                        <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                        <Text style={[styles.statusBannerText, { color: colors.primary }]}>
+                          Workday Completed
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {locationStatus && (
+                  <View style={styles.locationInfo}>
+                    <Ionicons
+                      name={locationStatus.error ? "alert-circle" : "location"}
+                      size={14}
+                      color={locationStatus.error ? "#EF4444" : colors.placeholderText}
+                    />
+                    <Text style={[styles.locationText, { color: colors.placeholderText }]}>
+                      {locationStatus.error
+                        ? locationStatus.error
+                        : `Distance: ${locationStatus.distance}m from school`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
         ) : isParent && students.length === 0 ? (
           <View style={styles.emptyContainer}>
@@ -759,10 +1094,10 @@ export default function AttendanceScreen() {
                                 isActive
                                   ? { backgroundColor: activeColor }
                                   : {
-                                      backgroundColor: colors.background,
-                                      borderWidth: 1,
-                                      borderColor: colors.border,
-                                    },
+                                    backgroundColor: colors.background,
+                                    borderWidth: 1,
+                                    borderColor: colors.border,
+                                  },
                               ]}
                               onPress={() =>
                                 handleStatusChange(student.student_id, status)
@@ -878,7 +1213,7 @@ export default function AttendanceScreen() {
       </ScrollView>
 
       {/* Floating Footer (Save OR Bulk Actions) */}
-      {isTeacher && (
+      {isTeacher && viewMode === "students" && (
         <View
           style={[
             styles.floatingFooter,
@@ -1238,4 +1573,161 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   headerTopRow: { flexDirection: "row" }, // kept for safety if referenced else where but rewritten
+  segmentedControlContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    gap: 12,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  segmentButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  myAttendanceContainer: {
+    paddingTop: 10,
+  },
+  myAttendanceCard: {
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  myAttendanceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 20,
+    gap: 16,
+  },
+  myAvatarLarge: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  myAvatarText: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  myName: {
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  myRole: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  divider: {
+    height: 1,
+    width: "100%",
+    marginBottom: 20,
+  },
+  myStatusSection: {
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  myStatusLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  myStatusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 16,
+    gap: 10,
+  },
+  myStatusText: {
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  timeSection: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(0,0,0,0.02)",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+  },
+  timeColumn: {
+    alignItems: "center",
+    flex: 1,
+  },
+  timeLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  timeValue: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  myNotesSection: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.05)",
+  },
+  myNotesText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  actionContainer: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.05)",
+  },
+  clockButtonsContainer: {
+    marginBottom: 12,
+  },
+  clockButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  clockButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  statusBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  statusBannerText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  locationInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  locationText: {
+    fontSize: 12,
+  },
 });
